@@ -1,0 +1,30 @@
+# Build output
+bin/
+obj/
+publish/
+
+# IDE / VS
+.vs/
+*.user
+*.suo
+*.ncb
+*.sdf
+*.VC.db
+
+# NuGet
+*.nupkg
+packages/
+artifacts/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Test & utility projects (not part of main release)
+TestDetections/
+GenIcon/
+
+# Temp / dev scripts
+test_*.py
+/index.html

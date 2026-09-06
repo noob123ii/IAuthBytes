@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="DiagnosticScan/DiagnosticScan.csproj" />
+  <Project Path="IAuthBytes/IAuthBytes.csproj" />
+</Solution>
