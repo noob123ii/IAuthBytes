@@ -149,6 +149,17 @@ IAuthBytes/
 
 ---
 
+<details>
+<summary><b>known limitations</b></summary>
+
+**false positives will happen.** the scanner uses heuristics and byte pattern matching, which means it can flag legitimate files that happen to match suspicious patterns. this is especially true for modded DLLs or custom plugins that use similar APIs to what malware uses. always check what's flagged before quarantineing anything.
+
+**since it's open source, malware authors can bypass it.** the detection patterns, thresholds, and logic are all public. anyone can read the code and write malware that avoids triggering them. this is an inherent limitation of any open-source security tool — transparency is a tradeoff. the detection signatures will be updated over time to keep up with new threats, but there's no guarantee of catching everything.
+
+</details>
+
+---
+
 > [!NOTE]
 > This product is not affiliated with Gorilla Tag or Another Axiom LLC and is not endorsed or otherwise sponsored by Another Axiom LLC. Portions of the materials contained herein are property of Another Axiom LLC. © 2026 Another Axiom LLC.
 
