@@ -10,7 +10,7 @@
         Background="Transparent"
         Loaded="Window_Loaded">
 
-    <Border Background="#090B10" CornerRadius="10" BorderThickness="1" BorderBrush="#181C26">
+    <Border Background="#090B10" CornerRadius="12" BorderThickness="1" BorderBrush="#181C26">
         <wv2:WebView2 x:Name="Browser"/>
     </Border>
 </Window>
