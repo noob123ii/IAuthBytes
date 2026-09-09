@@ -65,6 +65,17 @@ needs .NET 10.0 SDK.
 - network monitor watching GT's connections for non-Steam outbound traffic
 - PowerShell and registry persistence detection
 
+### anti-hook & self-protection
+- debugger detection (5 methods: IsDebuggerPresent, CheckRemoteDebuggerPresent, NtQueryInformationProcess x3)
+- inline hook scanning on 21+ critical APIs across 8 DLLs (ntdll, kernel32, user32, advapi32, ws2_32, winhttp, crypt32, shell32)
+- IAT hook detection via .text section entropy analysis
+- external process access detection (hooks, injectors, debuggers reading IAuthBytes memory)
+- handle abuse detection (full/write+dup access from external processes)
+- module injection detection (unexpected DLLs loaded into IAuthBytes)
+- self-integrity verification: MZ/PE header validation, file size bounds, SHA-256 hash vs stored baseline
+- continuous .text section monitoring (30-second timer) — detects runtime patches to IAuthBytes's own code
+- 3 self-tests: hook detection baseline, .text integrity cache, process access count
+
 ### quarantine
 - threats moved to `%LocalAppData%\IAuthBytes\Quarantine`
 - metadata saved with original path and detection reason
@@ -75,6 +86,12 @@ needs .NET 10.0 SDK.
 - WebView2-based interface
 - real-time scan progress with phase indicators
 - toast notifications with severity types
+
+### ui obfuscation
+- the HTML/CSS/JS powering the UI is obfuscated via a custom Python build pipeline (`build_obfuscated.py`)
+- string encryption, identifier renaming, function hash obfuscation — makes it hard to reverse-engineer the C# ↔ JS communication protocol or tamper with UI logic
+- anti-debugging traps and integrity checks in the JS layer
+- the clean source lives in `index.template.html`; the obfuscated output is embedded as a resource in the final build
 
 </details>
 
