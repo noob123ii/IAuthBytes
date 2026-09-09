@@ -25,7 +25,8 @@ namespace IAuthBytes
             "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta",
             "certutil", "bitsadmin", "regsvr32", "rundll32", "msiexec",
             "wmic", "schtasks", "tasklist", "net", "net1", "netsh",
-            "bcdedit", "at", "sc"
+            "bcdedit", "at", "sc", "curl", "wget", "http",
+            "nc", "ncat", "plink", "socat", "tclsh"
         };
 
         private static readonly HashSet<string> SuspiciousChildPatterns = new(StringComparer.OrdinalIgnoreCase)
@@ -40,7 +41,16 @@ namespace IAuthBytes
             "wmic process call create", "wmic process list",
             "net user", "net localgroup", "net share",
             "bcdedit /set", "bcdedit /enum",
-            "taskkill /f", "taskkill /im"
+            "taskkill /f", "taskkill /im",
+            "curl -o", "curl -O", "wget",
+            "nc -e", "ncat -e", "plink",
+            "cmd /c powershell", "cmd /c certutil",
+            "cmd /c bitsadmin", "cmd /c regsvr32",
+            "cmd /c rundll32", "cmd /c mshta",
+            "invoke-expression", "iex(", "iex ",
+            "downloadstring", "downloadfile", "downloaddata",
+            "invoke-webrequest", "invoke-restmethod",
+            "start-process", "start-bitstransfer"
         };
 
         private static readonly HashSet<string> MaliciousDomains = new(StringComparer.OrdinalIgnoreCase)
@@ -385,6 +395,22 @@ namespace IAuthBytes
                 !Scanner.IsKnownGoodModule(lower))
                 return true;
 
+            string[] proxyDlls = {
+                "version.dll", "winhttp.dll", "wtsapi32.dll", "dbghelp.dll",
+                "profapi.dll", "msasn1.dll", "cryptsp.dll", "cryptbase.dll",
+                "d3d9.dll", "opengl32.dll", "dsound.dll", "dinput8.dll"
+            };
+            if (proxyDlls.Contains(lower))
+            {
+                if (!lowerPath.Contains("system32") && !lowerPath.Contains("syswow64"))
+                    return true;
+            }
+
+            if (lower.Contains("hook") || lower.Contains("inject") || lower.Contains("cheat") ||
+                lower.Contains("exploit") || lower.Contains("payload") || lower.Contains("loader") ||
+                lower.Contains("injector") || lower.Contains("proxy"))
+                return true;
+
             return false;
         }
 
@@ -456,6 +482,34 @@ namespace IAuthBytes
                         Encoding.Unicode.GetBytes("api.telegram.org"),
                         Encoding.ASCII.GetBytes("Invoke-Expression"),
                         Encoding.ASCII.GetBytes("System.Reflection.Assembly.Load"),
+                        Encoding.ASCII.GetBytes("SeedPhrase"),
+                        Encoding.ASCII.GetBytes("mnemonic"),
+                        Encoding.ASCII.GetBytes("private key"),
+                        Encoding.ASCII.GetBytes("wallet.dat"),
+                        Encoding.ASCII.GetBytes("exodus"),
+                        Encoding.ASCII.GetBytes("metamask"),
+                        Encoding.ASCII.GetBytes("phantom"),
+                        Encoding.ASCII.GetBytes("Authorization"),
+                        Encoding.ASCII.GetBytes("Bearer"),
+                        Encoding.ASCII.GetBytes("WLAN_PROFILE"),
+                        Encoding.ASCII.GetBytes("keyMaterial"),
+                        Encoding.ASCII.GetBytes("Login Data"),
+                        Encoding.ASCII.GetBytes("logins.json"),
+                        Encoding.ASCII.GetBytes("cmd /c del"),
+                        Encoding.ASCII.GetBytes("cmd /c timeout"),
+                        Encoding.ASCII.GetBytes("NtCreateSection"),
+                        Encoding.ASCII.GetBytes("NtMapViewOfSection"),
+                        Encoding.ASCII.GetBytes("CredEnumerate"),
+                        Encoding.ASCII.GetBytes("CertOpenStore"),
+                        Encoding.ASCII.GetBytes("NetShareEnum"),
+                        Encoding.ASCII.GetBytes("WNetEnumResource"),
+                        Encoding.Unicode.GetBytes("SeedPhrase"),
+                        Encoding.Unicode.GetBytes("mnemonic"),
+                        Encoding.Unicode.GetBytes("private key"),
+                        Encoding.Unicode.GetBytes("wallet.dat"),
+                        Encoding.Unicode.GetBytes("exodus"),
+                        Encoding.Unicode.GetBytes("metamask"),
+                        Encoding.Unicode.GetBytes("phantom"),
                     };
 
                     while ((long)currentAddr < (long)maxAddr)
@@ -572,12 +626,16 @@ namespace IAuthBytes
         {
             return port is 4444 or 5555 or 1234 or 6666 or 7777 or 8888 or 9999
                 or 1337 or 31337 or 44444 or 55555 or 12345 or 54321
-                or 8080 or 8443 or 9090 or 4433 or 7070;
+                or 8080 or 8443 or 9090 or 4433 or 7070
+                or 1080 or 3389 or 5900 or 5901 or 445
+                or 135 or 139 or 8443 or 9443 or 2083 or 2087
+                or 2096 or 8888 or 2052 or 2082 or 2086 or 2095;
         }
 
         private static bool IsKnownBadPort(int port)
         {
-            return port is 4444 or 5555 or 1337 or 31337 or 44444 or 12345 or 54321;
+            return port is 4444 or 5555 or 1337 or 31337 or 44444 or 12345 or 54321
+                or 1080 or 445 or 135 or 5900 or 5901;
         }
 
         private static string TruncateCmd(string s)

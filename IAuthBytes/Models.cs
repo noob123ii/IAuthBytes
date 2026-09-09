@@ -95,6 +95,34 @@ namespace IAuthBytes
                     return "Disguise";
                 if (desc.Contains("integrity") || desc.Contains("hash mismatch") && desc.Contains("iauthbytes"))
                     return "Integrity";
+                if (desc.Contains("discord token"))
+                    return "Token Theft";
+                if (desc.Contains("crypto wallet"))
+                    return "Crypto";
+                if (desc.Contains("wifi credential"))
+                    return "WiFi";
+                if (desc.Contains("saved password"))
+                    return "Password";
+                if (desc.Contains("webcam"))
+                    return "Webcam";
+                if (desc.Contains("audio capture"))
+                    return "Audio";
+                if (desc.Contains("self-deletion"))
+                    return "Stealth";
+                if (desc.Contains("anti-sandbox"))
+                    return "Stealth";
+                if (desc.Contains("dll search order"))
+                    return "Hijack";
+                if (desc.Contains("doppelganging"))
+                    return "Stealth";
+                if (desc.Contains("environment variable"))
+                    return "Exfil";
+                if (desc.Contains("screenshot + exfil"))
+                    return "Combo";
+                if (desc.Contains("network share"))
+                    return "Recon";
+                if (desc.Contains("certificate") || desc.Contains("credential theft"))
+                    return "Credential";
                 if (ThreatType.Contains("Graze"))
                     return "Graze";
                 return ThreatType;
@@ -138,6 +166,16 @@ namespace IAuthBytes
             "Symlink" => "Yellow",
             "Disguise" => "Red",
             "Integrity" => "Red",
+            "Token Theft" => "Red",
+            "Crypto" => "Red",
+            "WiFi" => "Orange",
+            "Password" => "Red",
+            "Webcam" => "Red",
+            "Audio" => "Orange",
+            "Stealth" => "Red",
+            "Hijack" => "Orange",
+            "Combo" => "Red",
+            "Recon" => "Orange",
             _ => "TextMuted",
         };
 

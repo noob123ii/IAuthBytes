@@ -93,7 +93,13 @@ namespace IAuthBytes
             "Double extension detected", "Magic byte mismatch",
             "Text file contains", "Image file contains", "PDF file contains",
             "Archive file contains", "Binary file with invalid PE header",
-            "IAuthBytes executable has invalid", "IAuthBytes binary hash mismatch"
+            "IAuthBytes executable has invalid", "IAuthBytes binary hash mismatch",
+            "Discord token theft", "Crypto wallet stealer", "WiFi credential theft",
+            "Saved password theft", "Webcam capture", "Audio capture",
+            "Self-deletion", "Anti-sandbox", "DLL search order hijacking",
+            "Process Doppelgänging", "Environment variable exfiltration",
+            "Screenshot + exfil combo", "Network share enumeration",
+            "Certificate/credential theft", "String obfuscation"
         };
 
         private static List<ThreatInfo> DetectPeThreats(string filePath, byte[] fileBytes, PeAnalyzer.PeInfo pe, bool isPlugin, bool isGtDll, bool isKnownGood)
@@ -393,6 +399,128 @@ namespace IAuthBytes
                         reasons.Add($"Known GT DLL oversized ({FormatSize(fileBytes.Length)} vs max {FormatSize(range.Value.max)})");
                     }
                 }
+            }
+
+            // ===== NEW DETECTIONS =====
+
+            // Discord token theft
+            bool hasDiscordToken = HasPattern("discord.com/api") || HasPattern("users/@me") ||
+                                   HasPattern("tokens") || HasPattern("mfa.");
+            bool hasTokenGrab = HasPattern("Authorization") || HasPattern("Bearer") ||
+                                HasPattern("GetEnvironmentVariable") && HasPattern("DISCORD");
+            if (hasDiscordToken && hasTokenGrab)
+            {
+                strongCount++; reasons.Add("Discord token theft");
+            }
+
+            // Crypto wallet stealer
+            bool hasCryptoKeywords = HasPattern("wallet") || HasPattern("seed phrase") ||
+                                     HasPattern("mnemonic") || HasPattern("private key");
+            bool hasCryptoPaths = HasPattern("Exodus") || HasPattern("Electrum") ||
+                                  HasPattern("Bitcoin") || HasPattern("Ethereum") ||
+                                  HasPattern("MetaMask") || HasPattern("Phantom") ||
+                                  HasPattern("Binance");
+            if (hasCryptoKeywords && hasCryptoPaths)
+            {
+                strongCount++; reasons.Add("Crypto wallet stealer");
+            }
+
+            // WiFi credential theft
+            bool hasWlanProfile = HasPattern("WLAN_PROFILE") || HasPattern("netsh wlan") ||
+                                  HasPattern("wlanapi.dll") || HasPattern("WlanEnumInterfaces");
+            bool hasWifiExport = HasPattern("keyMaterial") || HasPattern("clearKey") ||
+                                 HasPattern("Profiles.xml");
+            if (hasWlanProfile && hasWifiExport)
+            {
+                strongCount++; reasons.Add("WiFi credential theft");
+            }
+
+            // Saved password theft
+            bool hasSavedPass = HasPattern("Login Data") || HasPattern("logins.json") ||
+                                HasPattern("signons.sqlite") || HasPattern("credmap") ||
+                                HasPattern("CredEnumerate");
+            bool hasPassExfil = HasPattern("UploadString") || HasPattern("UploadFile") ||
+                                HasPattern("WebClient") || HasPattern("SmtpClient");
+            if (hasSavedPass && hasPassExfil)
+            {
+                strongCount++; reasons.Add("Saved password theft");
+            }
+
+            // Screen recording / webcam
+            bool hasWebcam = HasPattern("capCreateCaptureWindow") || HasPattern("avicap32") ||
+                             HasPattern("DirectShow") || HasPattern("ICaptureGraphBuilder");
+            bool hasAudioCapture = HasPattern("waveInOpen") || HasPattern("WasapiCapture") ||
+                                   HasPattern("NAudio");
+            if (hasWebcam || hasAudioCapture)
+            {
+                strongCount++; reasons.Add(hasWebcam ? "Webcam capture" : "Audio capture");
+            }
+
+            // Self-deletion
+            bool hasSelfDelete = HasPattern("MoveFileEx") && HasPattern("DELETE_ON_CLOSE") ||
+                                 HasPattern("File.Delete") && HasPattern("Assembly.Location") ||
+                                 HasPattern("cmd /c del") || HasPattern("cmd /c timeout") && HasPattern("del");
+            if (hasSelfDelete)
+            {
+                strongCount++; reasons.Add("Self-deletion");
+            }
+
+            // Anti-sandbox
+            bool hasAntiSandbox = HasPattern("GetTickCount") && HasPattern("Sleep") && HasPattern("NtDelayExecution") ||
+                                  HasPattern("CheckRemoteDebuggerPresent") && HasPattern("GetAsyncKeyState") ||
+                                  HasPattern("QueryPerformanceCounter") && HasPattern("rdtsc");
+            if (hasAntiSandbox)
+            {
+                strongCount++; reasons.Add("Anti-sandbox");
+            }
+
+            // DLL search order hijacking
+            bool hasMissingDll = HasPattern("version.dll") && HasPattern("dbghelp.dll") ||
+                                 HasPattern("winhttp.dll") && HasPattern("wtsapi32.dll") ||
+                                 HasPattern("profapi.dll") && HasPattern("msasn1.dll");
+            if (hasMissingDll && (hasLoadLib || hasGetProcAddress))
+            {
+                strongCount++; reasons.Add("DLL search order hijacking");
+            }
+
+            // Process Doppelgänging / Ghosting
+            bool hasDoppelganging = HasPattern("NtCreateSection") && HasPattern("NtMapViewOfSection") &&
+                                    HasPattern("NtSetInformationThread") && HasPattern("NtResumeThread");
+            if (hasDoppelganging)
+            {
+                strongCount++; reasons.Add("Process Doppelgänging");
+            }
+
+            // Env variable exfiltration
+            bool hasEnvAccess = HasPattern("GetEnvironmentVariable") || HasPattern("Environment.GetEnvironmentVariable");
+            bool hasEnvExfil = HasPattern("discord.com") || HasPattern("telegram.org") ||
+                               HasPattern("webhook") || HasPattern("UploadString");
+            if (hasEnvAccess && hasEnvExfil)
+            {
+                strongCount++; reasons.Add("Environment variable exfiltration");
+            }
+
+            // Screenshot combo (BitBlt + clipboard + exfil)
+            if (hasBitBlt && HasPattern("OpenClipboard") && hasUploadExfil)
+            {
+                strongCount++; reasons.Add("Screenshot + exfil combo");
+            }
+
+            // Network enumeration
+            bool hasNetEnum = HasPattern("NetShareEnum") || HasPattern("WNetEnumResource") ||
+                              HasPattern("NetUserEnum");
+            bool hasNetExfil = HasPattern("WebClient") || HasPattern("Socket") || HasPattern("HttpWebRequest");
+            if (hasNetEnum && hasNetExfil)
+            {
+                strongCount++; reasons.Add("Network share enumeration");
+            }
+
+            // Keychain / credential manager
+            bool hasKeychain = HasPattern("CredRead") || HasPattern("CredEnumerate") ||
+                               HasPattern("CertOpenStore") || HasPattern("CertEnumCertificatesInStore");
+            if (hasKeychain && (hasUploadExfil || hasDiscord || hasTelegram))
+            {
+                strongCount++; reasons.Add("Certificate/credential theft");
             }
 
             int strongReasonCount = reasons.Count(r => StrongIndicators.Contains(r));
