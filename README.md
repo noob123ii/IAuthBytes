@@ -140,6 +140,7 @@ IAuthBytes/
 ├── IAuthBytes/
 │   ├── MainWindow.xaml / .xaml.cs      — WPF window + WebView2 host
 │   ├── Scanner.cs                      — 28+ detection categories, 7-phase scan
+│   ├── AntiHook.cs                     — anti-hook detection, self-integrity, continuous monitoring
 │   ├── RuntimeGuard.cs                 — file/process/network monitoring
 │   ├── TamperDetector.cs               — GT DLL baseline verification
 │   ├── PeAnalyzer.cs                   — PE header parsing
@@ -148,6 +149,7 @@ IAuthBytes/
 │   ├── index.html                      — obfuscated UI (embedded resource)
 │   └── icon.ico
 ├── DiagnosticScan/                     — console diagnostic tool
+├── HookTest/                           — hook injection test harness
 ├── build_obfuscated.py                 — JS obfuscation pipeline
 ├── index.template.html                 — clean UI source
 └── IAuthBytes.slnx
