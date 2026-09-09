@@ -28,3 +28,7 @@ GenIcon/
 # Temp / dev scripts
 test_*.py
 /index.html
+
+# Build artifacts
+release/
+*.zip

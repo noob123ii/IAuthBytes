@@ -81,6 +81,20 @@ namespace IAuthBytes
                     return "Tamper";
                 if (desc.Contains("suspicious"))
                     return "Suspicious";
+                if (desc.Contains("inline hook") || desc.Contains("jmp hook") || desc.Contains("call hook") ||
+                    desc.Contains("indirect jmp") || desc.Contains("nop sled") || desc.Contains("push+ret") ||
+                    desc.Contains("mov rax+jmp") || desc.Contains("iathook") || desc.Contains("debugger detected") ||
+                    desc.Contains("remote debugger") || desc.Contains("ntquery debug") || desc.Contains("anti-hook"))
+                    return "Anti-Hook";
+                if (desc.Contains("hidden file") || desc.Contains("hidden attribute"))
+                    return "Hidden";
+                if (desc.Contains("symlink") || desc.Contains("reparse point"))
+                    return "Symlink";
+                if (desc.Contains("double extension") || desc.Contains("magic byte mismatch") ||
+                    desc.Contains("magic bytes") || desc.Contains("disguise"))
+                    return "Disguise";
+                if (desc.Contains("integrity") || desc.Contains("hash mismatch") && desc.Contains("iauthbytes"))
+                    return "Integrity";
                 if (ThreatType.Contains("Graze"))
                     return "Graze";
                 return ThreatType;
@@ -120,6 +134,10 @@ namespace IAuthBytes
             "Overlay" => "Yellow",
             "Tamper" => "Red",
             "Suspicious" => "Orange",
+            "Anti-Hook" => "Red",
+            "Symlink" => "Yellow",
+            "Disguise" => "Red",
+            "Integrity" => "Red",
             _ => "TextMuted",
         };
 

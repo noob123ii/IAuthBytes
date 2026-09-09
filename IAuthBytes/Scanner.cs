@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -84,186 +85,16 @@ namespace IAuthBytes
             "DLL sideloading", "Socket C2", "Multi-stage loader",
             "Hidden console injection", "PowerShell download", "Anti-analysis",
             "VM detection", "Shellcode pattern", "Embedded executable",
-            "Packed payload", "Reflection abuse"
+            "Packed payload", "Reflection abuse",
+            "Inline hook", "JMP hook", "CALL hook", "Indirect JMP hook",
+            "NOP sled", "Push+RET hook", "MOV RAX+JMP hook",
+            "Debugger detected", "Remote debugger detected", "NtQuery debug port detected",
+            "Symbolic link detected", "Reparse point detected",
+            "Double extension detected", "Magic byte mismatch",
+            "Text file contains", "Image file contains", "PDF file contains",
+            "Archive file contains", "Binary file with invalid PE header",
+            "IAuthBytes executable has invalid", "IAuthBytes binary hash mismatch"
         };
-
-        public static ScanResult RunScan(string gtPath, Action<ScanProgress>? onProgress = null, CancellationToken ct = default)
-        {
-            var result = new ScanResult { GtPath = gtPath };
-
-            try
-            {
-                if (string.IsNullOrEmpty(gtPath) || !Directory.Exists(gtPath))
-                {
-                    result.Error = "Gorilla Tag path not found";
-                    result.Status = "error";
-                    return result;
-                }
-
-                var phases = new[]
-                {
-                    new { Name = ".graze", Files = CollectGrazeFiles(gtPath) },
-                    new { Name = "Plugins", Files = CollectPluginFiles(gtPath) },
-                    new { Name = "DLLs", Files = CollectDllFiles(gtPath) },
-                    new { Name = "EXEs", Files = CollectExeFiles(gtPath) },
-                    new { Name = "Configs", Files = CollectConfigFiles(gtPath) }
-                };
-
-                int totalFiles = phases.Sum(p => p.Files.Count);
-                int filesScanned = 0;
-
-                for (int phaseIdx = 0; phaseIdx < phases.Length; phaseIdx++)
-                {
-                    var phase = phases[phaseIdx];
-
-                    onProgress?.Invoke(new ScanProgress
-                    {
-                        Phase = phaseIdx,
-                        PhaseName = phase.Name,
-                        CurrentFile = $"Scanning {phase.Name}...",
-                        FilesScanned = filesScanned,
-                        TotalFiles = totalFiles,
-                        Percentage = totalFiles > 0 ? (double)filesScanned / totalFiles * 100 : 0
-                    });
-
-                    foreach (string filePath in phase.Files)
-                    {
-                        ct.ThrowIfCancellationRequested();
-
-                        string fileName = Path.GetFileName(filePath);
-
-                        onProgress?.Invoke(new ScanProgress
-                        {
-                            Phase = phaseIdx,
-                            PhaseName = phase.Name,
-                            CurrentFile = fileName,
-                            FilesScanned = filesScanned,
-                            TotalFiles = totalFiles,
-                            Percentage = totalFiles > 0 ? (double)filesScanned / totalFiles * 100 : 0
-                        });
-
-                        try
-                        {
-                            byte[] fileBytes = File.ReadAllBytes(filePath);
-                            var threats = AnalyzeFile(filePath, fileBytes);
-                            result.Threats.AddRange(threats);
-                        }
-                        catch { }
-
-                        filesScanned++;
-                    }
-
-                    onProgress?.Invoke(new ScanProgress
-                    {
-                        Phase = phaseIdx + 1,
-                        PhaseName = phaseIdx + 1 < phases.Length ? phases[phaseIdx + 1].Name : "Complete",
-                        CurrentFile = phase.Name + " complete",
-                        FilesScanned = filesScanned,
-                        TotalFiles = totalFiles,
-                        Percentage = totalFiles > 0 ? (double)filesScanned / totalFiles * 100 : 0
-                    });
-                }
-
-                result.FilesScanned = filesScanned;
-
-                onProgress?.Invoke(new ScanProgress
-                {
-                    Phase = 5,
-                    PhaseName = "Tamper Check",
-                    CurrentFile = "Verifying file integrity...",
-                    FilesScanned = filesScanned,
-                    TotalFiles = totalFiles,
-                    Percentage = 100
-                });
-
-                try
-                {
-                    var manifest = TamperDetector.FindSteamManifest(gtPath);
-                    if (manifest != null)
-                    {
-                        var (buildId, version) = TamperDetector.ParseSteamManifest(manifest);
-                        if (!string.IsNullOrEmpty(buildId))
-                        {
-                            var tamperThreats = TamperDetector.RunTamperCheck(gtPath, buildId, version);
-                            result.Threats.AddRange(tamperThreats);
-                        }
-                    }
-                }
-                catch { }
-
-                onProgress?.Invoke(new ScanProgress
-                {
-                    Phase = 6,
-                    PhaseName = "Complete",
-                    CurrentFile = $"Scan complete — {filesScanned} files, {result.Threats.Count} threats",
-                    FilesScanned = filesScanned,
-                    TotalFiles = totalFiles,
-                    Percentage = 100
-                });
-            }
-            catch (OperationCanceledException)
-            {
-                result.Status = "cancelled";
-            }
-            catch (Exception ex)
-            {
-                result.Error = ex.Message;
-                result.Status = "error";
-                Logger.LogException("Scan", ex);
-            }
-
-            return result;
-        }
-
-        private static List<ThreatInfo> AnalyzeFile(string filePath, byte[] fileBytes)
-        {
-            var threats = new List<ThreatInfo>();
-            string fileName = Path.GetFileName(filePath);
-            string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            bool isPlugin = filePath.Contains("plugins", StringComparison.OrdinalIgnoreCase);
-            bool isGtDll = KnownGtDlls.Contains(fileName);
-            bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
-
-            if (ext == ".dll" || ext == ".exe")
-            {
-                var pe = PeAnalyzer.Analyze(fileBytes);
-                if (pe.IsValid)
-                {
-                    threats.AddRange(DetectPeThreats(filePath, fileBytes, pe, isPlugin, isGtDll, isKnownGood));
-                }
-                else if (isPlugin)
-                {
-                    double entropy = PeAnalyzer.CalcEntropy(fileBytes);
-                    if (entropy > 6.5 && fileBytes.Length > 10000)
-                    {
-                        threats.Add(new ThreatInfo
-                        {
-                            FileName = fileName,
-                            FilePath = filePath,
-                            ThreatType = "Obfuscation",
-                            FileSize = FormatSize(fileBytes.Length),
-                            Severity = Severity.Medium,
-                            Description = $"High entropy ({entropy:F1}) in unsigned plugin — possible packing"
-                        });
-                    }
-                }
-            }
-
-            if (ext == ".graze" || Directory.Exists(filePath))
-            {
-                threats.Add(new ThreatInfo
-                {
-                    FileName = fileName,
-                    FilePath = filePath,
-                    ThreatType = "Graze",
-                    FileSize = "",
-                    Severity = Severity.High,
-                    Description = ".graze item detected — malicious mod loader artifact"
-                });
-            }
-
-            return threats;
-        }
 
         private static List<ThreatInfo> DetectPeThreats(string filePath, byte[] fileBytes, PeAnalyzer.PeInfo pe, bool isPlugin, bool isGtDll, bool isKnownGood)
         {
@@ -758,6 +589,603 @@ namespace IAuthBytes
             if (bytes < 1024) return $"{bytes} B";
             if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
             return $"{bytes / (1024.0 * 1024.0):F1} MB";
+        }
+
+        private static readonly byte[] GrazeSignature = Encoding.ASCII.GetBytes(".graze");
+        private static readonly byte[] GrazeSignatureUtf16 = Encoding.Unicode.GetBytes(".graze");
+        private static readonly byte[] MzHeader = { 0x4D, 0x5A };
+        private static readonly byte[] PeSignature = { 0x50, 0x45, 0x00, 0x00 };
+        private static readonly byte[] ElfSignature = { 0x7F, 0x45, 0x4C, 0x46 };
+        private static readonly byte[] ZipSignature = { 0x50, 0x4B, 0x03, 0x04 };
+        private static readonly byte[] GzSignature = { 0x1F, 0x8B };
+        private static readonly byte[] Bz2Signature = { 0x42, 0x5A, 0x68 };
+        private static readonly byte[] XzSignature = { 0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00 };
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileAttributesEx(string lpFileName, int fInfoLevelId, out WIN32_FILE_ATTRIBUTE_DATA lpFileInformation);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WIN32_FILE_ATTRIBUTE_DATA
+        {
+            public int dwFileAttributes;
+            public long ftCreationTime;
+            public long ftLastAccessTime;
+            public long ftLastWriteTime;
+            public int nFileSizeHigh;
+            public int nFileSizeLow;
+        }
+
+        private const int GET_FILEEX_INFO_LEVELS = 0;
+        private const int FILE_ATTRIBUTE_HIDDEN = 0x02;
+        private const int FILE_ATTRIBUTE_SYSTEM = 0x04;
+        private const int FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
+
+        public static ScanResult RunScan(string gtPath, Action<ScanProgress>? onProgress = null, CancellationToken ct = default)
+        {
+            var result = new ScanResult { GtPath = gtPath };
+
+            try
+            {
+                if (string.IsNullOrEmpty(gtPath) || !Directory.Exists(gtPath))
+                {
+                    result.Error = "Gorilla Tag path not found";
+                    result.Status = "error";
+                    return result;
+                }
+
+                var phases = new[]
+                {
+                    new { Name = ".graze", Files = CollectGrazeFiles(gtPath) },
+                    new { Name = "Plugins", Files = CollectPluginFiles(gtPath) },
+                    new { Name = "DLLs", Files = CollectDllFiles(gtPath) },
+                    new { Name = "EXEs", Files = CollectExeFiles(gtPath) },
+                    new { Name = "Configs", Files = CollectConfigFiles(gtPath) }
+                };
+
+                int totalFiles = phases.Sum(p => p.Files.Count);
+                int filesScanned = 0;
+
+                for (int phaseIdx = 0; phaseIdx < phases.Length; phaseIdx++)
+                {
+                    var phase = phases[phaseIdx];
+
+                    onProgress?.Invoke(new ScanProgress
+                    {
+                        Phase = phaseIdx,
+                        PhaseName = phase.Name,
+                        CurrentFile = $"Scanning {phase.Name}...",
+                        FilesScanned = filesScanned,
+                        TotalFiles = totalFiles,
+                        Percentage = totalFiles > 0 ? (double)filesScanned / totalFiles * 100 : 0
+                    });
+
+                    foreach (string filePath in phase.Files)
+                    {
+                        ct.ThrowIfCancellationRequested();
+
+                        string fileName = Path.GetFileName(filePath);
+
+                        onProgress?.Invoke(new ScanProgress
+                        {
+                            Phase = phaseIdx,
+                            PhaseName = phase.Name,
+                            CurrentFile = fileName,
+                            FilesScanned = filesScanned,
+                            TotalFiles = totalFiles,
+                            Percentage = totalFiles > 0 ? (double)filesScanned / totalFiles * 100 : 0
+                        });
+
+                        try
+                        {
+                            byte[] fileBytes = File.ReadAllBytes(filePath);
+                            var threats = AnalyzeFile(filePath, fileBytes);
+                            result.Threats.AddRange(threats);
+                        }
+                        catch { }
+
+                        filesScanned++;
+                    }
+
+                    onProgress?.Invoke(new ScanProgress
+                    {
+                        Phase = phaseIdx + 1,
+                        PhaseName = phaseIdx + 1 < phases.Length ? phases[phaseIdx + 1].Name : "Complete",
+                        CurrentFile = phase.Name + " complete",
+                        FilesScanned = filesScanned,
+                        TotalFiles = totalFiles,
+                        Percentage = totalFiles > 0 ? (double)filesScanned / totalFiles * 100 : 0
+                    });
+                }
+
+                result.FilesScanned = filesScanned;
+
+                onProgress?.Invoke(new ScanProgress
+                {
+                    Phase = 5,
+                    PhaseName = "Anti-Hook",
+                    CurrentFile = "Checking for hooks and tampering...",
+                    FilesScanned = filesScanned,
+                    TotalFiles = totalFiles,
+                    Percentage = 100
+                });
+
+                try
+                {
+                    var antiHookThreats = AntiHook.RunAntiHookCheck(gtPath);
+                    result.Threats.AddRange(antiHookThreats);
+                }
+                catch { }
+
+                onProgress?.Invoke(new ScanProgress
+                {
+                    Phase = 6,
+                    PhaseName = "Tamper Check",
+                    CurrentFile = "Verifying file integrity...",
+                    FilesScanned = filesScanned,
+                    TotalFiles = totalFiles,
+                    Percentage = 100
+                });
+
+                try
+                {
+                    var manifest = TamperDetector.FindSteamManifest(gtPath);
+                    if (manifest != null)
+                    {
+                        var (buildId, version) = TamperDetector.ParseSteamManifest(manifest);
+                        if (!string.IsNullOrEmpty(buildId))
+                        {
+                            var tamperThreats = TamperDetector.RunTamperCheck(gtPath, buildId, version);
+                            result.Threats.AddRange(tamperThreats);
+                        }
+                    }
+                }
+                catch { }
+
+                onProgress?.Invoke(new ScanProgress
+                {
+                    Phase = 7,
+                    PhaseName = "Complete",
+                    CurrentFile = $"Scan complete — {filesScanned} files, {result.Threats.Count} threats",
+                    FilesScanned = filesScanned,
+                    TotalFiles = totalFiles,
+                    Percentage = 100
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                result.Status = "cancelled";
+            }
+            catch (Exception ex)
+            {
+                result.Error = ex.Message;
+                result.Status = "error";
+                Logger.LogException("Scan", ex);
+            }
+
+            return result;
+        }
+
+        private static List<ThreatInfo> AnalyzeFile(string filePath, byte[] fileBytes)
+        {
+            var threats = new List<ThreatInfo>();
+            string fileName = Path.GetFileName(filePath);
+            string ext = Path.GetExtension(filePath).ToLowerInvariant();
+            bool isPlugin = filePath.Contains("plugins", StringComparison.OrdinalIgnoreCase);
+            bool isGtDll = KnownGtDlls.Contains(fileName);
+            bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+
+            threats.AddRange(DetectGrazeByBytes(filePath, fileBytes, fileName));
+            threats.AddRange(DetectHiddenFile(filePath, fileName));
+            threats.AddRange(DetectDoubleExtension(filePath, fileName));
+            threats.AddRange(DetectSymlink(filePath, fileName));
+            threats.AddRange(DetectMagicMismatch(filePath, fileBytes, fileName, ext));
+
+            if (ext == ".dll" || ext == ".exe")
+            {
+                var pe = PeAnalyzer.Analyze(fileBytes);
+                if (pe.IsValid)
+                {
+                    threats.AddRange(DetectPeThreats(filePath, fileBytes, pe, isPlugin, isGtDll, isKnownGood));
+                }
+                else if (isPlugin)
+                {
+                    double entropy = PeAnalyzer.CalcEntropy(fileBytes);
+                    if (entropy > 6.5 && fileBytes.Length > 10000)
+                    {
+                        threats.Add(new ThreatInfo
+                        {
+                            FileName = fileName,
+                            FilePath = filePath,
+                            ThreatType = "Obfuscation",
+                            FileSize = FormatSize(fileBytes.Length),
+                            Severity = Severity.Medium,
+                            Description = $"High entropy ({entropy:F1}) in unsigned plugin — possible packing"
+                        });
+                    }
+                }
+            }
+
+            if (ext == ".graze" || Directory.Exists(filePath))
+            {
+                threats.Add(new ThreatInfo
+                {
+                    FileName = fileName,
+                    FilePath = filePath,
+                    ThreatType = "Graze",
+                    FileSize = "",
+                    Severity = Severity.High,
+                    Description = ".graze item detected — malicious mod loader artifact"
+                });
+            }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> DetectGrazeByBytes(string filePath, byte[] fileBytes, string fileName)
+        {
+            var threats = new List<ThreatInfo>();
+
+            if (fileBytes.Length < 10) return threats;
+
+            bool hasGrazeAscii = ContainsAscii(fileBytes, ".graze") || ContainsAscii(fileBytes, "graze");
+            bool hasGrazeUtf16 = ContainsUtf16LE(fileBytes, ".graze") || ContainsUtf16LE(fileBytes, "graze");
+
+            if (hasGrazeAscii || hasGrazeUtf16)
+            {
+                string ext = Path.GetExtension(filePath).ToLowerInvariant();
+                if (ext != ".graze")
+                {
+                    bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+                    if (!isKnownGood)
+                    {
+                        threats.Add(new ThreatInfo
+                        {
+                            FileName = fileName,
+                            FilePath = filePath,
+                            ThreatType = "Graze",
+                            FileSize = FormatSize(fileBytes.Length),
+                            Severity = Severity.Critical,
+                            Description = $"File contains .graze byte signatures but has {ext} extension — likely disguised malware"
+                        });
+                    }
+                }
+            }
+
+            if (fileBytes.Length >= 4)
+            {
+                bool hasMz = fileBytes[0] == 0x4D && fileBytes[1] == 0x5A;
+                bool hasGrazeContent = hasGrazeAscii || hasGrazeUtf16;
+
+                if (hasMz && hasGrazeContent)
+                {
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = fileName,
+                        FilePath = filePath,
+                        ThreatType = "Graze",
+                        FileSize = FormatSize(fileBytes.Length),
+                        Severity = Severity.Critical,
+                        Description = "PE file containing .graze loader signatures — trojanized DLL"
+                    });
+                }
+            }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> DetectHiddenFile(string filePath, string fileName)
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                if (GetFileAttributesEx(filePath, GET_FILEEX_INFO_LEVELS, out var attrData))
+                {
+                    int attrs = attrData.dwFileAttributes;
+
+                    if ((attrs & FILE_ATTRIBUTE_HIDDEN) != 0)
+                    {
+                        string ext = Path.GetExtension(filePath).ToLowerInvariant();
+                        bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+
+                        if (!isKnownGood && (ext == ".graze" || ext == ".dll" || ext == ".exe"))
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = fileName,
+                                FilePath = filePath,
+                                ThreatType = "Hidden",
+                                FileSize = FormatSize(((long)attrData.nFileSizeHigh << 32) | (uint)attrData.nFileSizeLow),
+                                Severity = Severity.High,
+                                Description = $"Hidden file detected — {fileName} has hidden attribute set"
+                            });
+                        }
+                    }
+
+                    if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                    {
+                        threats.Add(new ThreatInfo
+                        {
+                            FileName = fileName,
+                            FilePath = filePath,
+                            ThreatType = "Symlink",
+                            FileSize = "",
+                            Severity = Severity.Medium,
+                            Description = $"Reparse point detected — {fileName} may be a symlink or junction"
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> DetectDoubleExtension(string filePath, string fileName)
+        {
+            var threats = new List<ThreatInfo>();
+
+            string lowerName = fileName.ToLowerInvariant();
+            string[] suspiciousPatterns = {
+                ".graze.dll", ".graze.exe", ".graze.scr", ".graze.com",
+                ".graze.bat", ".graze.cmd", ".graze.pif", ".graze.vbs",
+                ".dll.graze", ".exe.graze", ".scr.graze", ".com.graze",
+                ".txt.graze", ".jpg.graze", ".png.graze", ".pdf.graze",
+                ".doc.graze", ".docx.graze", ".xls.graze", ".xlsx.graze",
+                ".mp3.graze", ".mp4.graze", ".zip.graze", ".rar.graze"
+            };
+
+            foreach (string pattern in suspiciousPatterns)
+            {
+                if (lowerName.Contains(pattern))
+                {
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = fileName,
+                        FilePath = filePath,
+                        ThreatType = "Disguise",
+                        FileSize = "",
+                        Severity = Severity.Critical,
+                        Description = $"Double extension detected: {fileName} — likely malware disguised as {Path.GetExtension(fileName.Substring(0, fileName.Length - Path.GetExtension(fileName).Length))} file"
+                    });
+                    break;
+                }
+            }
+
+            if (lowerName.Count(c => c == '.') >= 3)
+            {
+                string[] parts = lowerName.Split('.');
+                if (parts.Length >= 3)
+                {
+                    string secondLast = parts[^2];
+                    string last = parts[^1];
+                    string[] realExtensions = { "dll", "exe", "scr", "com", "bat", "cmd", "vbs", "ps1", "js", "wsf" };
+
+                    if (realExtensions.Contains(last) && secondLast.Length >= 2 && secondLast.Length <= 4)
+                    {
+                        bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+                        if (!isKnownGood)
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = fileName,
+                                FilePath = filePath,
+                                ThreatType = "Disguise",
+                                FileSize = "",
+                                Severity = Severity.High,
+                                Description = $"Suspicious multi-extension file: {fileName} — may be hiding real file type"
+                            });
+                        }
+                    }
+                }
+            }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> DetectSymlink(string filePath, string fileName)
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                var fileInfo = new FileInfo(filePath);
+                var dirInfo = new DirectoryInfo(Path.GetDirectoryName(filePath) ?? "");
+
+                if (dirInfo.Exists)
+                {
+                    foreach (var link in dirInfo.EnumerateFileSystemInfos())
+                    {
+                        if (link.Name.Equals(fileName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (link.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                            {
+                                threats.Add(new ThreatInfo
+                                {
+                                    FileName = fileName,
+                                    FilePath = filePath,
+                                    ThreatType = "Symlink",
+                                    FileSize = "",
+                                    Severity = Severity.Medium,
+                                    Description = $"Symbolic link detected: {fileName} points to another location"
+                                });
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            try
+            {
+                FileAttributes attrs = File.GetAttributes(filePath);
+                if (attrs.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    bool alreadyAdded = threats.Any(t => t.FileName == fileName && t.ThreatType == "Symlink");
+                    if (!alreadyAdded)
+                    {
+                        threats.Add(new ThreatInfo
+                        {
+                            FileName = fileName,
+                            FilePath = filePath,
+                            ThreatType = "Symlink",
+                            FileSize = "",
+                            Severity = Severity.Medium,
+                            Description = $"Reparse point detected: {fileName} is a symlink or junction"
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> DetectMagicMismatch(string filePath, byte[] fileBytes, string fileName, string ext)
+        {
+            var threats = new List<ThreatInfo>();
+
+            if (fileBytes.Length < 4) return threats;
+
+            bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+            if (isKnownGood) return threats;
+
+            bool hasMz = fileBytes[0] == 0x4D && fileBytes[1] == 0x5A;
+            bool hasElf = fileBytes[0] == 0x7F && fileBytes[1] == 0x45 && fileBytes[2] == 0x4C && fileBytes[3] == 0x46;
+            bool hasZip = fileBytes[0] == 0x50 && fileBytes[1] == 0x4B && fileBytes[2] == 0x03 && fileBytes[3] == 0x04;
+            bool hasGz = fileBytes[0] == 0x1F && fileBytes[1] == 0x8B;
+            bool hasBz2 = fileBytes[0] == 0x42 && fileBytes[1] == 0x5A && fileBytes[2] == 0x68;
+            bool hasXz = fileBytes[0] == 0xFD && fileBytes[1] == 0x37 && fileBytes[2] == 0x7A && fileBytes[3] == 0x58;
+            bool hasRar = fileBytes[0] == 0x52 && fileBytes[1] == 0x61 && fileBytes[2] == 0x72 && fileBytes[3] == 0x21;
+            bool has7z = fileBytes[0] == 0x37 && fileBytes[1] == 0x7A && fileBytes[2] == 0xBC && fileBytes[3] == 0xAF;
+            bool hasPng = fileBytes[0] == 0x89 && fileBytes[1] == 0x50 && fileBytes[2] == 0x4E && fileBytes[3] == 0x47;
+            bool hasJpg = fileBytes[0] == 0xFF && fileBytes[1] == 0xD8 && fileBytes[2] == 0xFF;
+            bool hasGif = fileBytes[0] == 0x47 && fileBytes[1] == 0x49 && fileBytes[2] == 0x46;
+            bool hasPdf = fileBytes[0] == 0x25 && fileBytes[1] == 0x50 && fileBytes[2] == 0x44 && fileBytes[3] == 0x46;
+            bool hasPptx = hasZip && fileBytes.Length > 100;
+            bool hasDocx = hasZip && fileBytes.Length > 100;
+
+            if (ext == ".dll" || ext == ".exe" || ext == ".scr" || ext == ".com")
+            {
+                if (!hasMz)
+                {
+                    string actualType = "unknown";
+                    if (hasElf) actualType = "ELF binary";
+                    else if (hasZip) actualType = "ZIP archive";
+                    else if (hasGz) actualType = "GZ archive";
+                    else if (hasPdf) actualType = "PDF document";
+                    else if (hasPng) actualType = "PNG image";
+                    else if (hasJpg) actualType = "JPG image";
+                    else if (hasRar) actualType = "RAR archive";
+                    else if (has7z) actualType = "7Z archive";
+
+                    if (actualType != "unknown")
+                    {
+                        threats.Add(new ThreatInfo
+                        {
+                            FileName = fileName,
+                            FilePath = filePath,
+                            ThreatType = "Disguise",
+                            FileSize = FormatSize(fileBytes.Length),
+                            Severity = Severity.Critical,
+                            Description = $"Magic byte mismatch: {ext} file is actually {actualType} — likely malware disguised"
+                        });
+                    }
+                    else if (fileBytes.Length > 1000)
+                    {
+                        double entropy = PeAnalyzer.CalcEntropy(fileBytes);
+                        if (entropy > 7.0)
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = fileName,
+                                FilePath = filePath,
+                                ThreatType = "Disguise",
+                                FileSize = FormatSize(fileBytes.Length),
+                                Severity = Severity.High,
+                                Description = $"Binary file with invalid PE header and high entropy ({entropy:F1}) — possible packed payload"
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (ext == ".txt" || ext == ".log" || ext == ".md" || ext == ".csv" || ext == ".xml" || ext == ".json" || ext == ".html")
+            {
+                if (hasMz || hasElf || hasZip || hasGz || hasBz2 || hasXz)
+                {
+                    string actualType = "unknown";
+                    if (hasMz) actualType = "PE executable";
+                    else if (hasElf) actualType = "ELF binary";
+                    else if (hasZip) actualType = "ZIP archive";
+                    else if (hasGz) actualType = "GZ archive";
+                    else if (hasBz2) actualType = "BZ2 archive";
+                    else if (hasXz) actualType = "XZ archive";
+
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = fileName,
+                        FilePath = filePath,
+                        ThreatType = "Disguise",
+                        FileSize = FormatSize(fileBytes.Length),
+                        Severity = Severity.Critical,
+                        Description = $"Text file contains {actualType} magic bytes — likely malware disguised as text"
+                    });
+                }
+            }
+
+            if (ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".bmp" || ext == ".webp")
+            {
+                if (hasMz || hasZip || hasElf)
+                {
+                    string actualType = hasMz ? "PE executable" : hasZip ? "ZIP archive" : "ELF binary";
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = fileName,
+                        FilePath = filePath,
+                        ThreatType = "Disguise",
+                        FileSize = FormatSize(fileBytes.Length),
+                        Severity = Severity.Critical,
+                        Description = $"Image file contains {actualType} magic bytes — likely malware disguised as image"
+                    });
+                }
+            }
+
+            if (ext == ".pdf")
+            {
+                if (!hasPdf && (hasMz || hasZip || hasElf))
+                {
+                    string actualType = hasMz ? "PE executable" : hasZip ? "ZIP archive" : "ELF binary";
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = fileName,
+                        FilePath = filePath,
+                        ThreatType = "Disguise",
+                        FileSize = FormatSize(fileBytes.Length),
+                        Severity = Severity.Critical,
+                        Description = $"PDF file contains {actualType} magic bytes — likely malware disguised as PDF"
+                    });
+                }
+            }
+
+            if (ext == ".zip" || ext == ".rar" || ext == ".7z" || ext == ".gz" || ext == ".tar")
+            {
+                if (hasMz)
+                {
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = fileName,
+                        FilePath = filePath,
+                        ThreatType = "Disguise",
+                        FileSize = FormatSize(fileBytes.Length),
+                        Severity = Severity.Critical,
+                        Description = $"Archive file contains PE executable magic bytes — likely malware disguised as archive"
+                    });
+                }
+            }
+
+            return threats;
         }
 
         public static string ToJson(ScanResult result)
