@@ -99,6 +99,7 @@ SAFE_WORDS = {
     'showPage', 'startScan', 'cancelScan', 'findGt', 'launchGt',
     'minimizeWindow', 'maximizeWindow', 'closeWindow', 'dragWindow',
     'hideToast', 'showToast', 'quarantineFile', 'toggleGuard', 'toggleSetting', 'setTheme', 'setFx',
+    'toggleBlur', 'setBlurAmount', 'applyBlur',
     'onGtFound', 'onGtNotFound', 'onScanProgress', 'onScanComplete',
     'onGuardStarted', 'onGuardStopped', 'onRuntimeEvent',
     'document', 'window', 'console', 'localStorage', 'JSON', 'Math',

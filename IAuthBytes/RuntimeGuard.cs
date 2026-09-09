@@ -110,6 +110,9 @@ namespace IAuthBytes
             _cts = null;
             _seenPids.Clear();
             _seenConnections.Clear();
+            _seenSysPids.Clear();
+            _seenPorts.Clear();
+            ListeningPorts.Clear();
             try { _watcher?.Dispose(); } catch { }
             _watcher = null;
         }
@@ -134,6 +137,8 @@ namespace IAuthBytes
                     CheckChildProcesses(onEvent, _gtProcess);
                     CheckNetworkConnections(onEvent, _gtProcess);
                     CheckLoadedModules(onEvent, _gtProcess);
+                    CheckSystemWideProcesses(onEvent);
+                    CheckListeningPorts(onEvent);
 
                     await Task.Delay(1500, ct);
                 }
@@ -373,6 +378,132 @@ namespace IAuthBytes
                 finally
                 {
                     CloseHandle(hProcess);
+                }
+            }
+            catch { }
+        }
+
+        private static readonly HashSet<int> _seenSysPids = new();
+
+        private static void CheckSystemWideProcesses(Action<RuntimeEvent>? onEvent)
+        {
+            try
+            {
+                foreach (var proc in Process.GetProcesses())
+                {
+                    try
+                    {
+                        if (proc.Id == 0 || proc.Id == 4) continue;
+                        if (_seenSysPids.Contains(proc.Id)) continue;
+                        _seenSysPids.Add(proc.Id);
+
+                        string name = proc.ProcessName.ToLowerInvariant();
+                        if (SuspiciousProcesses.Contains(name))
+                        {
+                            string cmdLine = GetCommandLine(proc.Id);
+                            string sev = "warning";
+                            string msg = $"System suspicious process: {proc.ProcessName} (PID {proc.Id})";
+
+                            if (name is "powershell" or "pwsh")
+                            {
+                                sev = "critical";
+                                if (cmdLine.Contains("-enc", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("-encodedcommand", StringComparison.OrdinalIgnoreCase))
+                                    msg = $"System PowerShell encoded command (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                                else if (cmdLine.Contains("-w hidden", StringComparison.OrdinalIgnoreCase))
+                                    msg = $"System hidden PowerShell (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                                else if (cmdLine.Contains("invoke-expression", StringComparison.OrdinalIgnoreCase) ||
+                                         cmdLine.Contains("iex", StringComparison.OrdinalIgnoreCase))
+                                    msg = $"System IEX execution (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                                else
+                                    msg = $"System PowerShell detected (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                            }
+                            else if (name is "cmd")
+                            {
+                                if (cmdLine.Contains("powershell", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("certutil", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("bitsadmin", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("regsvr32", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("rundll32", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("mshta", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    sev = "critical";
+                                    msg = $"System suspicious cmd.exe chain (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                                }
+                            }
+                            else if (name is "mshta")
+                            {
+                                sev = "critical";
+                                msg = $"System mshta.exe detected (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                            }
+                            else if (name is "certutil")
+                            {
+                                if (cmdLine.Contains("-urlcache", StringComparison.OrdinalIgnoreCase) ||
+                                    cmdLine.Contains("-decode", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    sev = "critical";
+                                    msg = $"System certutil abuse (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                                }
+                            }
+                            else if (name is "regsvr32")
+                            {
+                                sev = "critical";
+                                msg = $"System regsvr32 detected (PID {proc.Id}): {TruncateCmd(cmdLine)}";
+                            }
+
+                            onEvent?.Invoke(new RuntimeEvent
+                            {
+                                Type = "process",
+                                Severity = sev,
+                                Message = msg
+                            });
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        private static readonly HashSet<string> _seenPorts = new();
+        private static readonly HashSet<int> ListeningPorts = new();
+
+        private static void CheckListeningPorts(Action<RuntimeEvent>? onEvent)
+        {
+            try
+            {
+                var properties = IPGlobalProperties.GetIPGlobalProperties();
+                var listeners = properties.GetActiveTcpListeners();
+
+                foreach (var listener in listeners)
+                {
+                    int port = listener.Port;
+                    if (port < 1024) continue;
+
+                    string key = $"listen:{port}";
+                    if (_seenPorts.Contains(key)) continue;
+                    _seenPorts.Add(key);
+
+                    ListeningPorts.Add(port);
+
+                    if (IsKnownBadPort(port))
+                    {
+                        onEvent?.Invoke(new RuntimeEvent
+                        {
+                            Type = "network",
+                            Severity = "critical",
+                            Message = $"High-risk listening port: {port} (known malware/C2 port)"
+                        });
+                    }
+                    else if (IsSuspiciousPort(port))
+                    {
+                        onEvent?.Invoke(new RuntimeEvent
+                        {
+                            Type = "network",
+                            Severity = "warning",
+                            Message = $"Suspicious listening port: {port}"
+                        });
+                    }
                 }
             }
             catch { }

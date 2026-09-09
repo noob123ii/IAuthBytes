@@ -35,7 +35,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans
 .sidebar-sep{width:32px;height:1px;background:var(--border);margin:8px 0 10px}
 .status{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--text3)}
 .status-dot{width:5px;height:5px;border-radius:50%;background:var(--green)}
-#fxCanvas{position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:9999}
+#fxCanvas{position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:9999;transition:filter 0.3s ease}
 .settings-section{margin-bottom:16px}
 .settings-section h3{font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px}
 .settings-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
@@ -51,6 +51,12 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans
 .fx-btn{padding:10px 6px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text2);font-size:10px;font-weight:500;text-align:center;transition:all 0.15s;font-family:inherit}
 .fx-btn:hover{border-color:var(--border2);color:var(--text)}
 .fx-btn.active{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.blur-row{display:flex;align-items:center;gap:12px;margin-top:10px;padding:8px 0}
+.blur-row label{font-size:11px;color:var(--text2);white-space:nowrap;min-width:90px}
+.blur-row input[type=range]{flex:1;-webkit-appearance:none;height:4px;border-radius:2px;background:var(--surface3);outline:none;cursor:pointer}
+.blur-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg);box-shadow:0 0 4px rgba(94,106,210,0.4)}
+.blur-row input[type=range]::-webkit-slider-thumb:hover{background:var(--accent-hover);box-shadow:0 0 6px rgba(94,106,210,0.6)}
+.blur-row .blur-val{font-size:11px;color:var(--text3);min-width:28px;text-align:right;font-family:Consolas,monospace}
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;z-index:1}
 .titlebar{height:36px;background:var(--bg);display:flex;align-items:center;padding:0 12px;flex-shrink:0;border-bottom:1px solid var(--border);user-select:none;cursor:default}
 .titlebar span{font-size:12px;font-weight:600;color:var(--text);letter-spacing:0.3px}
@@ -257,6 +263,8 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans
 <button class="fx-btn" onclick="setFx('dust',this)">Dust</button>
 <button class="fx-btn active" onclick="setFx('waves',this)">Waves</button>
 <button class="fx-btn" onclick="setFx('aurora',this)">Aurora</button>
+</div>
+<div class="blur-row"><label>Background blur</label><div class="toggle" data-key="bgBlur" onclick="toggleBlur(this)"><div class="track"><div class="thumb"></div></div></div><input type="range" id="blurSlider" min="0" max="20" value="4" oninput="setBlurAmount(this.value)"><span class="blur-val" id="blurVal">4px</span></div>
 </div></div>
 <div class="settings-section"><h3>Scan Settings</h3><div class="card">
 <div class="settings-row"><div><div class="settings-label">Scan .graze folders</div><div class="settings-desc">Detect malicious .graze directories</div></div><div class="toggle on" data-key="scanGraze" onclick="toggleSetting(this)"><div class="track"><div class="thumb"></div></div></div></div>
@@ -287,6 +295,7 @@ var settings = {
   scanGraze: true, scanDlls: true, scanObfuscation: true, scanEmbedded: true,
   scanExes: true, scanConfigs: true, realTime: true, toasts: true,
   autoFindGt: true, autoQuarantine: false, theme: 'mono', fx: 'waves',
+  bgBlur: false, bgBlurAmount: 4,
   guardProcesses: true, guardNetwork: true, guardPowerShell: true,
   guardFileSystem: true, guardRegistry: true, guardMemory: true
 };
@@ -583,6 +592,7 @@ function loadSettings() {
     var btns = document.querySelectorAll('.fx-btn');
     btns.forEach(function(b) { b.classList.remove('active'); if (b.textContent.toLowerCase() === settings.fx) b.classList.add('active'); });
     startFx(settings.fx || 'waves');
+    applyBlur();
   } catch (e) { startFx('waves'); }
 }
 
@@ -601,6 +611,31 @@ function setFx(name, btn) {
   if (btn) btn.classList.add('active');
   startFx(name);
   saveSettings();
+}
+
+function toggleBlur(el) {
+  el.classList.toggle('on');
+  settings.bgBlur = el.classList.contains('on');
+  applyBlur();
+  saveSettings();
+}
+function setBlurAmount(val) {
+  settings.bgBlurAmount = parseInt(val);
+  document.getElementById('blurVal').textContent = val + 'px';
+  applyBlur();
+  saveSettings();
+}
+function applyBlur() {
+  var c = document.getElementById('fxCanvas');
+  if (settings.bgBlur) {
+    c.style.filter = 'blur(' + settings.bgBlurAmount + 'px)';
+  } else {
+    c.style.filter = 'none';
+  }
+  var slider = document.getElementById('blurSlider');
+  if (slider) slider.value = settings.bgBlurAmount || 4;
+  var valEl = document.getElementById('blurVal');
+  if (valEl) valEl.textContent = (settings.bgBlurAmount || 4) + 'px';
 }
 
 function startFx(name) {

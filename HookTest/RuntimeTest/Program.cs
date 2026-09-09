@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -14,7 +15,7 @@ namespace RuntimeTest
         {
             Console.WriteLine("=== IAuthBytes Runtime Detection Test ===");
             Console.WriteLine("This simulates threats that RuntimeGuard should detect.");
-            Console.WriteLine("Watch the IAuthBytes Runtime tab for alerts.");
+            Console.WriteLine("IMPORTANT: Start the Guard in IAuthBytes before running this!");
             Console.WriteLine();
 
             string gtPath = args.Length > 0 ? args[0] :
@@ -30,9 +31,12 @@ namespace RuntimeTest
             }
 
             Console.WriteLine($"[*] GT Path: {gtPath}");
+            Console.WriteLine("[*] Waiting 3s for guard to be ready...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             int testNum = 0;
+            var spawnedProcs = new List<Process>();
 
             Console.WriteLine("=== TEST 1: Suspicious file creation ===");
             testNum++;
@@ -47,7 +51,7 @@ namespace RuntimeTest
                         string testFile = Path.Combine(testDir, $"test_suspicious{ext}");
                         File.WriteAllText(testFile, $"echo This is a runtime test file {ext}");
                         Console.WriteLine($"[+] Created: {Path.GetFileName(testFile)}");
-                        Thread.Sleep(200);
+                        Thread.Sleep(300);
                     }
                     Console.WriteLine("[+] RuntimeGuard should flag these as suspicious file creation");
                 }
@@ -57,6 +61,8 @@ namespace RuntimeTest
                 }
             }
             catch (Exception ex) { Console.WriteLine($"[!] Error: {ex.Message}"); }
+            Console.WriteLine("[*] Waiting 3s for monitor loop...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             Console.WriteLine("=== TEST 2: Suspicious binary modification ===");
@@ -74,7 +80,7 @@ namespace RuntimeTest
                     fakeDll[1] = 0x5A;
                     File.WriteAllBytes(testDll, fakeDll);
                     Console.WriteLine($"[+] Created fake DLL: {Path.GetFileName(testDll)}");
-                    Thread.Sleep(200);
+                    Thread.Sleep(500);
 
                     fakeDll[0] = 0x00;
                     fakeDll[1] = 0x00;
@@ -84,6 +90,8 @@ namespace RuntimeTest
                 }
             }
             catch (Exception ex) { Console.WriteLine($"[!] Error: {ex.Message}"); }
+            Console.WriteLine("[*] Waiting 3s for monitor loop...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             Console.WriteLine("=== TEST 3: Suspicious child process (cmd.exe) ===");
@@ -92,19 +100,21 @@ namespace RuntimeTest
             {
                 ProcessStartInfo psi = new("cmd.exe")
                 {
-                    Arguments = "/c echo runtime_test_placeholder",
+                    Arguments = "/k timeout /t 30 >nul",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
                 Process? proc = Process.Start(psi);
                 if (proc != null)
                 {
-                    Console.WriteLine($"[+] Spawned cmd.exe (PID {proc.Id})");
-                    Console.WriteLine("[+] RuntimeGuard should detect suspicious child process");
-                    proc.Kill();
+                    spawnedProcs.Add(proc);
+                    Console.WriteLine($"[+] Spawned cmd.exe (PID {proc.Id}) — stays alive for 30s");
+                    Console.WriteLine("[+] RuntimeGuard should detect suspicious process");
                 }
             }
             catch (Exception ex) { Console.WriteLine($"[!] Error: {ex.Message}"); }
+            Console.WriteLine("[*] Waiting 3s for monitor loop...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             Console.WriteLine("=== TEST 4: Suspicious network port listener ===");
@@ -115,11 +125,13 @@ namespace RuntimeTest
                 listener.Start();
                 Console.WriteLine("[+] Listening on localhost:4444 (known malware port)");
                 Console.WriteLine("[+] RuntimeGuard should flag suspicious port");
-                Thread.Sleep(2000);
+                Thread.Sleep(5000);
                 listener.Stop();
                 Console.WriteLine("[+] Stopped listener");
             }
             catch (Exception ex) { Console.WriteLine($"[!] Error: {ex.Message}"); }
+            Console.WriteLine("[*] Waiting 3s for monitor loop...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             Console.WriteLine("=== TEST 5: Suspicious file extension combo ===");
@@ -145,6 +157,8 @@ namespace RuntimeTest
                 }
             }
             catch (Exception ex) { Console.WriteLine($"[!] Error: {ex.Message}"); }
+            Console.WriteLine("[*] Waiting 3s for monitor loop...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             Console.WriteLine("=== TEST 6: Simulated registry persistence check ===");
@@ -181,20 +195,21 @@ namespace RuntimeTest
             {
                 ProcessStartInfo psi = new("cmd.exe")
                 {
-                    Arguments = "/c echo test_powershell_bypass_marker",
+                    Arguments = "/k powershell -nop -w hidden -c Get-Process",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
                 Process? proc = Process.Start(psi);
                 if (proc != null)
                 {
-                    Console.WriteLine($"[+] Spawned cmd.exe with suspicious args (PID {proc.Id})");
+                    spawnedProcs.Add(proc);
+                    Console.WriteLine($"[+] Spawned cmd.exe with hidden PowerShell (PID {proc.Id}) — stays alive for 30s");
                     Console.WriteLine("[+] RuntimeGuard should detect suspicious command pattern");
-                    Thread.Sleep(500);
-                    try { proc.Kill(); } catch { }
                 }
             }
             catch (Exception ex) { Console.WriteLine($"[!] Error: {ex.Message}"); }
+            Console.WriteLine("[*] Waiting 3s for monitor loop...");
+            Thread.Sleep(3000);
             Console.WriteLine();
 
             Console.WriteLine("=== TEST 9: File attribute manipulation (hidden file) ===");
@@ -234,8 +249,14 @@ namespace RuntimeTest
             Console.WriteLine("  Check IAuthBytes Runtime tab for alerts");
             Console.WriteLine("========================================");
             Console.WriteLine();
-            Console.WriteLine("Press ENTER to clean up test files...");
+
+            Console.WriteLine("Press ENTER to clean up test files and kill spawned processes...");
             Console.ReadLine();
+
+            foreach (var p in spawnedProcs)
+            {
+                try { if (!p.HasExited) p.Kill(); } catch { }
+            }
 
             try
             {
