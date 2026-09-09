@@ -31,6 +31,8 @@ namespace IAuthBytes
         {
             try
             {
+                AntiHook.StartContinuousMonitoring();
+
                 await Browser.EnsureCoreWebView2Async(null);
                 Browser.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
 
@@ -253,6 +255,7 @@ namespace IAuthBytes
 
         protected override void OnClosed(EventArgs e)
         {
+            AntiHook.StopContinuousMonitoring();
             RuntimeGuard.StopMonitoring();
             RuntimeGuard.StopFileMonitoring();
             _scanCts?.Dispose();
