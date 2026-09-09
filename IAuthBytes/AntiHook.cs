@@ -138,7 +138,7 @@ namespace IAuthBytes
                 var mainModule = process.MainModule;
                 if (mainModule == null) { Logger.Log("CacheTextSection: MainModule is null"); return; }
 
-                IntPtr moduleHandle = GetModuleHandle(null);
+                IntPtr moduleHandle = GetModuleHandle(null!);
                 if (moduleHandle == IntPtr.Zero) { Logger.Log("CacheTextSection: GetModuleHandle returned NULL"); return; }
 
                 Logger.Log($"CacheTextSection: Module handle 0x{moduleHandle.ToInt64():X}, reading PE header...");
