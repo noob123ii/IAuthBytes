@@ -1,0 +1,27 @@
+=== IAuthBytes Hook Injection Test ===
+
+[*] IAuthBytes: C:\Users\cpatt\Desktop\Projects\Public\IAuthBytes\IAuthBytes\bin\Debug\net10.0-windows\IAuthBytes.exe
+[*] IAuthBytes started, PID: 15456
+[*] Waiting 3 seconds for process init...
+[*] Got process handle
+[*] Local ntdll.dll: 0x7FFD81E80000
+[*] Local NtCreateFile: 0x7FFD81FE0E10
+[*] Remote NtCreateFile (same base): 0x7FFD81FE0E10
+[*] Remote NtCreateFile bytes: 4C-8B-D1-B8-55-00-00-00-F6-04-25-08-03-FE-7F-01
+[*] JMP hook patch: E9-FB-0F-00-00
+[*] Patching NtCreateFile in remote process...
+[*] VirtualProtectEx OK, old protect: 0x20
+[*] Write OK: 5 bytes written
+[*] Verify remote bytes: E9-FB-0F-00-00-00-00-00-F6-04-25-08-03-FE-7F-01
+
+=== HOOK INJECTED SUCCESSFULLY ===
+NtCreateFile now starts with JMP (0xE9) - anti-hook should detect this!
+
+Now trigger a scan in IAuthBytes UI to see Phase 5 (Anti-Hook) results.
+[*] Waiting 10 seconds for anti-hook timer to fire...
+[*] Restoring original NtCreateFile bytes...
+[*] Original bytes restored
+[*] Final verify: 4C-8B-D1-B8-55-00-00-00-F6-04-25-08-03-FE-7F-01
+[*] Restoring remote VirtualProtect...
+[*] Done. Hook test complete.
+Check IAuthBytes scan results - Phase 5 should show Anti-Hook detection.
