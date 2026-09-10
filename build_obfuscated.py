@@ -340,7 +340,7 @@ def build():
     ad += f"var _ta={obf_num(r_t1)};var _tb={obf_num(r_t2)};"
     ad += "var _t0=performance.now();"
     ad += "for(var _ti=0;_ti<100;_ti++){}"
-    ad += "if((performance.now()-_t0)>50){"  # >50ms for 100 loops = debugger
+    ad += "if((performance.now()-_t0)>200){"  # >200ms for 100 loops = debugger
     ad += "document.body.innerHTML='<h1 style=\"color:red;text-align:center;margin-top:40vh\">Debugger detected — access denied</h1>';"
     ad += "throw new Error('Anti-debug');}"
 
