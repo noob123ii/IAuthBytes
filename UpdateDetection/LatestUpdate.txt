@@ -1,4 +1,4 @@
-Version: 1.1.0
+Version: 1.0.0
 DownloadUrl: https://github.com/noob123ii/IAuthBytes/releases/latest
-ReleaseNotes: Added SHA256 whitelist verification, background blur, rounded GUI, system-wide runtime monitoring
-Integrity: A351BA988499CE9699113C8D7E50F67F81D1EFB018FFA2E12CA475ED0323F83A
+ReleaseNotes: Initial release with file scanning, runtime guard, anti-hook detection, and background effects
+Integrity: 48D60C20CCF76EAB00AD71567E2A412D249A2050F33CAC763FD1EDDD2655105F
