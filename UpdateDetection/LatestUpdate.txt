@@ -1,4 +1,5 @@
 Version: 1.0.0
 DownloadUrl: https://github.com/noob123ii/IAuthBytes/releases/latest
+ZipUrl: https://github.com/noob123ii/IAuthBytes/releases/latest
 ReleaseNotes: Initial release with file scanning, runtime guard, anti-hook detection, and background effects
-Integrity: 48D60C20CCF76EAB00AD71567E2A412D249A2050F33CAC763FD1EDDD2655105F
+Integrity: 1A6454C25D1B3D62FE79164F381ED5F8B962031A240B17881EBF384DB7DFBBCE

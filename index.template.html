@@ -179,11 +179,15 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans
 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:16px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
 <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px" id="updateTitle">Update Available</div>
 <div style="font-size:12px;color:var(--text2);margin-bottom:4px" id="updateDesc"></div>
-<div style="font-size:11px;color:var(--text3);margin-bottom:20px" id="updateNotes"></div>
-<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:20px">
-<div class="blur-row" style="margin:0;gap:6px"><label style="min-width:auto;font-size:11px;color:var(--text3)">Auto-update</label><div class="toggle" data-key="autoUpdate" onclick="toggleSetting(this)"><div class="track"><div class="thumb"></div></div></div></div>
+<div style="font-size:11px;color:var(--text3);margin-bottom:16px" id="updateNotes"></div>
+<div id="updateProgress" style="display:none;margin-bottom:20px">
+<div style="background:var(--surface2);border-radius:6px;height:8px;overflow:hidden;margin-bottom:8px">
+<div id="updateProgressBar" style="height:100%;background:var(--accent);border-radius:6px;width:0%;transition:width 0.3s"></div>
 </div>
-<div style="display:flex;gap:10px;justify-content:center">
+<div style="font-size:11px;color:var(--text2)" id="updateProgressText">Preparing...</div>
+</div>
+<div class="blur-row" style="margin:0 0 16px;justify-content:center;gap:6px"><label style="min-width:auto;font-size:11px;color:var(--text3)">Auto-update</label><div class="toggle" data-key="autoUpdate" onclick="toggleSetting(this)"><div class="track"><div class="thumb"></div></div></div></div>
+<div id="updateButtons">
 <button class="btn btn-primary" style="font-size:13px;padding:10px 28px;border-radius:var(--radius)" onclick="downloadUpdate()">Update Now</button>
 <button class="btn" style="font-size:13px;padding:10px 28px;border-radius:var(--radius);border:1px solid var(--border);background:var(--surface2);color:var(--text2)" onclick="closeUpdateBanner()">Close</button>
 </div>
@@ -601,18 +605,55 @@ function onUpdateCheck(data) {
   }
   if (data.updateAvailable) {
     document.getElementById('updateTitle').textContent = 'Update Available: v' + data.latestVersion;
-    document.getElementById('updateDesc').textContent = 'You are on v' + data.currentVersion + ' — ' + data.releaseNotes;
-    document.getElementById('updateNotes').textContent = data.releaseNotes;
+    document.getElementById('updateDesc').textContent = 'You are on v' + data.currentVersion;
+    document.getElementById('updateNotes').textContent = data.releaseNotes || '';
     document.getElementById('updateBanner').style.display = 'flex';
+    document.getElementById('updateProgress').style.display = 'none';
+    document.getElementById('updateButtons').style.display = '';
+    document.getElementById('updateProgressBar').style.width = '0%';
     if (settings.autoUpdate && data.downloadUrl) {
       downloadUpdate();
     }
   }
 }
 function downloadUpdate() {
-  if (_updateData && _updateData.downloadUrl) {
-    postMsgWithData('openUpdateUrl', { url: _updateData.downloadUrl });
+  if (_updateData) {
+    document.getElementById('updateProgress').style.display = 'block';
+    document.getElementById('updateButtons').style.display = 'none';
+    document.getElementById('updateProgressBar').style.width = '10%';
+    document.getElementById('updateProgressText').textContent = 'Starting update...';
+    postMsgWithData('autoUpdate', { zipUrl: _updateData.zipUrl || '' });
   }
+}
+function onUpdateProgress(data) {
+  var bar = document.getElementById('updateProgressBar');
+  var txt = document.getElementById('updateProgressText');
+  if (!bar || !txt) return;
+  var s = data.status || '';
+  if (s.indexOf('Downloading') !== -1) {
+    var m = s.match(/(\d+)%/);
+    var pct = m ? parseInt(m[1]) : 20;
+    bar.style.width = pct + '%';
+    txt.textContent = s;
+  } else if (s.indexOf('Extracting') !== -1) {
+    bar.style.width = '75%';
+    txt.textContent = 'Extracting files...';
+  } else if (s.indexOf('Installing') !== -1) {
+    bar.style.width = '90%';
+    txt.textContent = 'Installing update...';
+  } else if (s.indexOf('Restarting') !== -1) {
+    bar.style.width = '100%';
+    txt.textContent = 'Restarting app...';
+  } else {
+    txt.textContent = s;
+  }
+}
+function onUpdateError(data) {
+  var bar = document.getElementById('updateProgressBar');
+  var txt = document.getElementById('updateProgressText');
+  if (bar) bar.style.width = '0%';
+  if (txt) txt.textContent = 'Update failed: ' + (data.error || 'Unknown error');
+  document.getElementById('updateButtons').style.display = '';
 }
 function closeUpdateBanner() {
   document.getElementById('updateBanner').style.display = 'none';

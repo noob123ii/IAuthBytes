@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -14,6 +16,7 @@ namespace IAuthBytes
         public string CurrentVersion { get; set; } = "";
         public string LatestVersion { get; set; } = "";
         public string DownloadUrl { get; set; } = "";
+        public string ZipUrl { get; set; } = "";
         public string ReleaseNotes { get; set; } = "";
         public string Error { get; set; } = "";
     }
@@ -21,7 +24,8 @@ namespace IAuthBytes
     internal static class UpdateChecker
     {
         private const string UpdateUrl = "https://raw.githubusercontent.com/noob123ii/IAuthBytes/main/UpdateDetection/LatestUpdate.txt";
-        private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
+        private const string ReleasesApi = "https://api.github.com/repos/noob123ii/IAuthBytes/releases/latest";
+        private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
         public static string GetCurrentVersion()
         {
@@ -41,6 +45,7 @@ namespace IAuthBytes
 
                 string version = "";
                 string downloadUrl = "";
+                string zipUrl = "";
                 string releaseNotes = "";
                 string integrity = "";
 
@@ -50,6 +55,8 @@ namespace IAuthBytes
                         version = line.Substring("Version:".Length).Trim();
                     else if (line.StartsWith("DownloadUrl:"))
                         downloadUrl = line.Substring("DownloadUrl:".Length).Trim();
+                    else if (line.StartsWith("ZipUrl:"))
+                        zipUrl = line.Substring("ZipUrl:".Length).Trim();
                     else if (line.StartsWith("ReleaseNotes:"))
                         releaseNotes = line.Substring("ReleaseNotes:".Length).Trim();
                     else if (line.StartsWith("Integrity:"))
@@ -84,6 +91,7 @@ namespace IAuthBytes
 
                 info.LatestVersion = version;
                 info.DownloadUrl = downloadUrl;
+                info.ZipUrl = zipUrl;
                 info.ReleaseNotes = releaseNotes;
 
                 if (IsNewerVersion(version, info.CurrentVersion))
@@ -124,6 +132,192 @@ namespace IAuthBytes
                 return false;
             }
             catch { return false; }
+        }
+
+        private static async Task<string> ResolveZipUrlAsync(string explicitZipUrl)
+        {
+            if (!string.IsNullOrEmpty(explicitZipUrl))
+                return explicitZipUrl;
+
+            try
+            {
+                _http.DefaultRequestHeaders.UserAgent.Clear();
+                _http.DefaultRequestHeaders.UserAgent.ParseAdd("IAuthBytes-Updater");
+                string json = await _http.GetStringAsync(ReleasesApi);
+                using var doc = JsonDocument.Parse(json);
+                var assets = doc.RootElement.GetProperty("assets");
+                foreach (var asset in assets.EnumerateArray())
+                {
+                    string name = asset.GetProperty("name").GetString() ?? "";
+                    if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                        return asset.GetProperty("browser_download_url").GetString() ?? "";
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("UpdateChecker: Failed to resolve zip URL from GitHub API", ex);
+            }
+
+            return "";
+        }
+
+        public static async Task DownloadAndInstallAsync(string zipUrl, Action<string>? onProgress = null)
+        {
+            string resolvedUrl = await ResolveZipUrlAsync(zipUrl);
+            if (string.IsNullOrEmpty(resolvedUrl))
+            {
+                onProgress?.Invoke("No download URL found");
+                Logger.Log("UpdateChecker: No zip download URL available");
+                return;
+            }
+
+            string tempDir = Path.Combine(Path.GetTempPath(), "IAuthBytes_Update_" + Guid.NewGuid().ToString("N")[..8]);
+            string zipPath = Path.Combine(tempDir, "update.zip");
+            string extractDir = Path.Combine(tempDir, "extracted");
+            string appDir = AppContext.BaseDirectory;
+
+            try
+            {
+                Directory.CreateDirectory(tempDir);
+
+                onProgress?.Invoke("Downloading update...");
+                Logger.Log($"UpdateChecker: Downloading from {resolvedUrl}");
+
+                using (var response = await _http.GetAsync(resolvedUrl, HttpCompletionOption.ResponseHeadersRead))
+                {
+                    response.EnsureSuccessStatusCode();
+                    long? totalBytes = response.Content.Headers.ContentLength;
+
+                    await using var contentStream = await response.Content.ReadAsStreamAsync();
+                    await using var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920);
+
+                    byte[] buffer = new byte[81920];
+                    long downloaded = 0;
+                    int bytesRead;
+                    while ((bytesRead = await contentStream.ReadAsync(buffer)) > 0)
+                    {
+                        await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead));
+                        downloaded += bytesRead;
+                        if (totalBytes > 0)
+                        {
+                            int pct = (int)(downloaded * 100 / totalBytes.Value);
+                            onProgress?.Invoke($"Downloading... {pct}%");
+                        }
+                    }
+                }
+
+                onProgress?.Invoke("Extracting...");
+                Logger.Log($"UpdateChecker: Extracting zip ({new FileInfo(zipPath).Length} bytes)");
+                ZipFile.ExtractToDirectory(zipPath, extractDir);
+
+                // Find the actual app files in the extracted content
+                // They may be nested in a subfolder (e.g. IAuthBytes-1.1.0/)
+                string srcDir = extractDir;
+                var extractedDirs = Directory.GetDirectories(extractDir);
+                if (extractedDirs.Length == 1 && Directory.GetFiles(extractedDirs[0]).Length == 0)
+                {
+                    // Single subfolder with no files at root — the content is inside
+                    var innerFiles = Directory.GetFiles(extractedDirs[0]);
+                    var innerDirs = Directory.GetDirectories(extractedDirs[0]);
+                    if (innerFiles.Length > 0 || innerDirs.Length > 0)
+                        srcDir = extractedDirs[0];
+                }
+
+                onProgress?.Invoke("Installing...");
+
+                // Files to preserve (never overwrite these)
+                var preserveDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "Logs", "Crashes", "IAuthBytes.exe.WebView2",
+                    "Baseline", "runtimes"
+                };
+                var preserveFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "appsettings.json", "appsettings.Development.json"
+                };
+
+                // Copy new files over existing, skipping preserved items
+                foreach (string srcFile in Directory.GetFiles(srcDir, "*", SearchOption.AllDirectories))
+                {
+                    string relativePath = Path.GetRelativePath(srcDir, srcFile);
+                    string destFile = Path.Combine(appDir, relativePath);
+
+                    // Check if this file is in a preserved directory
+                    string? dirPart = Path.GetDirectoryName(relativePath);
+                    string rootDir = dirPart?.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0] ?? "";
+
+                    if (preserveDirs.Contains(rootDir))
+                    {
+                        Logger.Log($"UpdateChecker: Skipped preserved dir: {rootDir}");
+                        continue;
+                    }
+
+                    string fileName = Path.GetFileName(srcFile);
+                    if (preserveFiles.Contains(fileName))
+                    {
+                        Logger.Log($"UpdateChecker: Skipped preserved file: {fileName}");
+                        continue;
+                    }
+
+                    // Skip the updater script itself
+                    if (fileName.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+
+                    try
+                    {
+                        File.Copy(srcFile, destFile, true);
+                    }
+                    catch (IOException)
+                    {
+                        // File may be locked — write to a staging location and use batch replace
+                        string stagingFile = destFile + ".new";
+                        File.Copy(srcFile, stagingFile, true);
+                    }
+                }
+
+                onProgress?.Invoke("Update installed. Restarting...");
+
+                // Write a PowerShell script that waits for us to exit, then relaunches
+                string psScript = Path.Combine(tempDir, "update_restart.ps1");
+                string psContent = $@"
+# Wait for current process to fully exit
+Start-Sleep -Seconds 3
+
+# Remove the old temp zip
+Remove-Item -LiteralPath '{zipPath}' -Force -ErrorAction SilentlyContinue
+
+# Remove the extracted folder
+Remove-Item -LiteralPath '{tempDir}' -Recurse -Force -ErrorAction SilentlyContinue
+
+# Relaunch the app
+Start-Process -FilePath '{Path.Combine(appDir, "IAuthBytes.exe")}'
+";
+                await File.WriteAllTextAsync(psScript, psContent);
+
+                // Launch the PowerShell script detached
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = $"-ExecutionPolicy Bypass -WindowStyle Hidden -File \"{psScript}\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                });
+
+                Logger.Log("UpdateChecker: Update installed, restarting app");
+
+                // Exit the app
+                Environment.Exit(0);
+            }
+            catch (Exception ex)
+            {
+                onProgress?.Invoke($"Update failed: {ex.Message}");
+                Logger.LogException("UpdateChecker: Install failed", ex);
+
+                // Clean up temp dir
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
         }
 
         public static void OpenDownloadPage(string url)

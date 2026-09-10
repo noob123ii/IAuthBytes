@@ -49,6 +49,7 @@ namespace IAuthBytes
                         currentVersion = update.CurrentVersion,
                         latestVersion = update.LatestVersion,
                         downloadUrl = update.DownloadUrl,
+                        zipUrl = update.ZipUrl,
                         releaseNotes = update.ReleaseNotes,
                         error = update.Error
                     });
@@ -135,6 +136,7 @@ namespace IAuthBytes
                             currentVersion = update.CurrentVersion,
                             latestVersion = update.LatestVersion,
                             downloadUrl = update.DownloadUrl,
+                            zipUrl = update.ZipUrl,
                             releaseNotes = update.ReleaseNotes,
                             error = update.Error
                         });
@@ -145,6 +147,10 @@ namespace IAuthBytes
                 case "openUpdateUrl":
                     string url = json.RootElement.TryGetProperty("url", out var urlEl) ? urlEl.GetString() ?? "" : "";
                     UpdateChecker.OpenDownloadPage(url);
+                    break;
+                case "autoUpdate":
+                    string zipUrl = json.RootElement.TryGetProperty("zipUrl", out var zipEl) ? zipEl.GetString() ?? "" : "";
+                    StartAutoUpdate(zipUrl);
                     break;
                 case "quarantineRemove":
                     string rmPath = json.RootElement.TryGetProperty("path", out var rmEl) ? rmEl.GetString() ?? "" : "";
@@ -321,6 +327,29 @@ namespace IAuthBytes
             {
                 Logger.LogException("Launch GT", ex);
             }
+        }
+
+        private void StartAutoUpdate(string zipUrl)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await UpdateChecker.DownloadAndInstallAsync(zipUrl, progress =>
+                    {
+                        string pj = JsonSerializer.Serialize(new { status = progress });
+                        Dispatcher.BeginInvoke(() =>
+                            Browser.CoreWebView2.ExecuteScriptAsync($"onUpdateProgress({pj})"));
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogException("AutoUpdate", ex);
+                    string ej = JsonSerializer.Serialize(new { error = ex.Message });
+                    Dispatcher.BeginInvoke(() =>
+                        Browser.CoreWebView2.ExecuteScriptAsync($"onUpdateError({ej})"));
+                }
+            });
         }
 
         protected override void OnClosed(EventArgs e)
