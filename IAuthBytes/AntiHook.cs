@@ -85,6 +85,39 @@ namespace IAuthBytes
         [DllImport("ntdll.dll")]
         private static extern int NtQueryInformationThread(IntPtr threadHandle, int threadInformationClass, ref IntPtr threadInformation, int threadInformationLength, IntPtr returnLength);
 
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool VirtualQuery(IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, int dwLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr VirtualAlloc(IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool VirtualFree(IntPtr lpAddress, uint dwSize, uint dwFreeType);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtProtectVirtualMemory(IntPtr processHandle, ref IntPtr baseAddress, ref uint regionSize, uint newProtect, out uint oldProtect);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryVirtualMemory(IntPtr processHandle, IntPtr baseAddress, int memoryInformationClass, out MEMORY_BASIC_INFORMATION memoryInformation, int memoryInformationLength, out int returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MEMORY_BASIC_INFORMATION
+        {
+            public IntPtr BaseAddress;
+            public IntPtr AllocationBase;
+            public uint AllocationProtect;
+            public IntPtr RegionSize;
+            public uint State;
+            public uint Protect;
+            public uint Type;
+        }
+
+        private const uint PAGE_EXECUTE_READ = 0x20;
+        private const uint PAGE_EXECUTE_READWRITE = 0x40;
+        private const uint PAGE_READWRITE = 0x04;
+        private const uint MEM_COMMIT = 0x1000;
+        private const uint MEM_RESERVE = 0x2000;
+
         [StructLayout(LayoutKind.Sequential)]
         private struct THREADENTRY32
         {
@@ -165,6 +198,13 @@ namespace IAuthBytes
         private static Timer? _integrityTimer;
         private static volatile bool _integrityCheckFailed;
 
+        private static FileSystemWatcher? _selfFileWatcher;
+        private static byte[]? _iatSnapshot;
+        private static string? _selfDirectory;
+        private static Timer? _dllMonitorTimer;
+        private static readonly HashSet<string> _knownModules = new(StringComparer.OrdinalIgnoreCase);
+        private static Timer? _memoryProtectionTimer;
+
         public static bool IntegrityCheckFailed => _integrityCheckFailed;
 
         public static List<ThreatInfo> RunAntiHookCheck(string gtPath)
@@ -192,6 +232,9 @@ namespace IAuthBytes
             Logger.Log("AntiHook: StartContinuousMonitoring called");
             _selfPid = Process.GetCurrentProcess().Id;
             CacheTextSection();
+            ProtectTextSection();
+            SnapshotIAT();
+            SnapshotKnownModules();
 
             _integrityTimer = new Timer(_ =>
             {
@@ -202,15 +245,40 @@ namespace IAuthBytes
                         _integrityCheckFailed = true;
                         Logger.Log("CRITICAL: IAuthBytes .text section modified by external process!");
                     }
+
+                    if (!VerifyIATIntegrity())
+                    {
+                        _integrityCheckFailed = true;
+                        Logger.Log("CRITICAL: IAuthBytes IAT modified by external process!");
+                    }
+
+                    DetectMemoryTampering();
                 }
                 catch { }
             }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30));
+
+            _dllMonitorTimer = new Timer(_ =>
+            {
+                try
+                {
+                    DetectNewModules();
+                }
+                catch { }
+            }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(15));
+
+            StartSelfFileWatcher();
         }
 
         public static void StopContinuousMonitoring()
         {
             _integrityTimer?.Dispose();
             _integrityTimer = null;
+            _dllMonitorTimer?.Dispose();
+            _dllMonitorTimer = null;
+            _memoryProtectionTimer?.Dispose();
+            _memoryProtectionTimer = null;
+            _selfFileWatcher?.Dispose();
+            _selfFileWatcher = null;
         }
 
         private static void CacheTextSection()
@@ -301,6 +369,341 @@ namespace IAuthBytes
                 }
             }
             return true;
+        }
+
+        private static void ProtectTextSection()
+        {
+            try
+            {
+                if (_textSectionBase == IntPtr.Zero || _textSectionSize == 0) return;
+
+                uint oldProtect;
+                bool ok = VirtualProtect(_textSectionBase, (uint)_textSectionSize, PAGE_EXECUTE_READ, out oldProtect);
+                if (ok)
+                    Logger.Log($"ProtectTextSection: .text locked as PAGE_EXECUTE_READ (was 0x{oldProtect:X})");
+                else
+                    Logger.Log($"ProtectTextSection: VirtualProtect failed (error {GetLastError()})");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("ProtectTextSection", ex);
+            }
+        }
+
+        private static void SnapshotIAT()
+        {
+            try
+            {
+                var process = Process.GetCurrentProcess();
+                IntPtr selfBase = GetModuleHandle(string.Empty);
+                if (selfBase == IntPtr.Zero) return;
+
+                byte[] peHeader = new byte[4096];
+                if (!ReadProcessMemory(GetCurrentProcess(), selfBase, peHeader, peHeader.Length, out int read) || read < 64)
+                    return;
+
+                if (peHeader[0] != 0x4D || peHeader[1] != 0x5A) return;
+                int peOff = BitConverter.ToInt32(peHeader, 0x3C);
+                if (peOff + 24 >= peHeader.Length) return;
+                if (peHeader[peOff] != 0x50 || peHeader[peOff + 1] != 0x45) return;
+
+                int numSections = BitConverter.ToInt16(peHeader, peOff + 6);
+                int optHeaderSize = BitConverter.ToInt16(peHeader, peOff + 20);
+                int sectionHeaderOff = peOff + 24 + optHeaderSize;
+
+                for (int i = 0; i < numSections; i++)
+                {
+                    int secOff = sectionHeaderOff + (i * 40);
+                    if (secOff + 40 > peHeader.Length) break;
+
+                    string name = Encoding.ASCII.GetString(peHeader, secOff, 8).TrimEnd('\0');
+                    if (name == ".idata")
+                    {
+                        int virtualSize = BitConverter.ToInt32(peHeader, secOff + 8);
+                        int virtualAddr = BitConverter.ToInt32(peHeader, secOff + 12);
+                        IntPtr idataBase = IntPtr.Add(selfBase, virtualAddr);
+                        int idataSize = Math.Min(virtualSize, 65536);
+
+                        _iatSnapshot = new byte[idataSize];
+                        if (ReadProcessMemory(GetCurrentProcess(), idataBase, _iatSnapshot, idataSize, out int iatRead) && iatRead == idataSize)
+                        {
+                            Logger.Log($"SnapshotIAT: Cached .idata section: {idataSize} bytes");
+                        }
+                        else
+                        {
+                            _iatSnapshot = null;
+                            Logger.Log("SnapshotIAT: Failed to read .idata section");
+                        }
+                        return;
+                    }
+                }
+
+                Logger.Log("SnapshotIAT: .idata section not found, using import directory fallback");
+                SnapshotIATViaImportDir(selfBase, peHeader, peOff);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("SnapshotIAT", ex);
+            }
+        }
+
+        private static void SnapshotIATViaImportDir(IntPtr selfBase, byte[] peHeader, int peOff)
+        {
+            try
+            {
+                int importDirRva = BitConverter.ToInt32(peHeader, peOff + 24 + 120 + 16);
+                int importDirSize = BitConverter.ToInt32(peHeader, peOff + 24 + 120 + 20);
+                if (importDirRva == 0 || importDirSize == 0) return;
+
+                IntPtr importDirAddr = IntPtr.Add(selfBase, importDirRva);
+                byte[] importDir = new byte[Math.Min(importDirSize, 8192)];
+                if (!ReadProcessMemory(GetCurrentProcess(), importDirAddr, importDir, importDir.Length, out int dirRead) || dirRead < 20)
+                    return;
+
+                var iatEntries = new List<byte[]>();
+                int entryOff = 0;
+
+                while (entryOff + 20 <= importDir.Length)
+                {
+                    int lookupRva = BitConverter.ToInt32(importDir, entryOff);
+                    int nameRva = BitConverter.ToInt32(importDir, entryOff + 12);
+                    int iatRva = BitConverter.ToInt32(importDir, entryOff + 16);
+                    if (lookupRva == 0 && nameRva == 0 && iatRva == 0) break;
+
+                    IntPtr iatAddr = IntPtr.Add(selfBase, iatRva);
+                    byte[] iatEntriesBytes = new byte[2048];
+                    if (ReadProcessMemory(GetCurrentProcess(), iatAddr, iatEntriesBytes, iatEntriesBytes.Length, out int iatRead) && iatRead >= 8)
+                    {
+                        iatEntries.Add(iatEntriesBytes[..iatRead]);
+                    }
+                    entryOff += 20;
+                }
+
+                if (iatEntries.Count > 0)
+                {
+                    int totalSize = iatEntries.Sum(e => e.Length);
+                    _iatSnapshot = new byte[totalSize];
+                    int pos = 0;
+                    foreach (var entry in iatEntries)
+                    {
+                        Buffer.BlockCopy(entry, 0, _iatSnapshot, pos, entry.Length);
+                        pos += entry.Length;
+                    }
+                    Logger.Log($"SnapshotIAT: Cached import directory: {iatEntries.Count} entries, {_iatSnapshot.Length} bytes");
+                }
+            }
+            catch { }
+        }
+
+        private static bool VerifyIATIntegrity()
+        {
+            if (_iatSnapshot == null) return true;
+
+            try
+            {
+                IntPtr selfBase = GetModuleHandle(string.Empty);
+                if (selfBase == IntPtr.Zero) return true;
+
+                byte[] peHeader = new byte[4096];
+                if (!ReadProcessMemory(GetCurrentProcess(), selfBase, peHeader, peHeader.Length, out int read) || read < 64)
+                    return true;
+
+                if (peHeader[0] != 0x4D || peHeader[1] != 0x5A) return true;
+                int peOff = BitConverter.ToInt32(peHeader, 0x3C);
+                if (peOff + 24 >= peHeader.Length) return true;
+                if (peHeader[peOff] != 0x50 || peHeader[peOff + 1] != 0x45) return true;
+
+                int numSections = BitConverter.ToInt16(peHeader, peOff + 6);
+                int optHeaderSize = BitConverter.ToInt16(peHeader, peOff + 20);
+                int sectionHeaderOff = peOff + 24 + optHeaderSize;
+
+                for (int i = 0; i < numSections; i++)
+                {
+                    int secOff = sectionHeaderOff + (i * 40);
+                    if (secOff + 40 > peHeader.Length) break;
+
+                    string name = Encoding.ASCII.GetString(peHeader, secOff, 8).TrimEnd('\0');
+                    if (name == ".idata")
+                    {
+                        int virtualAddr = BitConverter.ToInt32(peHeader, secOff + 12);
+                        int virtualSize = BitConverter.ToInt32(peHeader, secOff + 8);
+                        IntPtr idataBase = IntPtr.Add(selfBase, virtualAddr);
+                        int idataSize = Math.Min(virtualSize, 65536);
+
+                        byte[] currentIAT = new byte[idataSize];
+                        if (!ReadProcessMemory(GetCurrentProcess(), idataBase, currentIAT, currentIAT.Length, out int iatRead) || iatRead != _iatSnapshot.Length)
+                            return true;
+
+                        for (int j = 0; j < _iatSnapshot.Length; j++)
+                        {
+                            if (currentIAT[j] != _iatSnapshot[j])
+                            {
+                                Logger.Log($"IAT byte changed at offset {j}: 0x{_iatSnapshot[j]:X2} -> 0x{currentIAT[j]:X2}");
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                }
+            }
+            catch { }
+            return true;
+        }
+
+        private static void SnapshotKnownModules()
+        {
+            try
+            {
+                var process = Process.GetCurrentProcess();
+                foreach (ProcessModule module in process.Modules)
+                {
+                    try
+                    {
+                        string name = Path.GetFileName(module.FileName).ToLowerInvariant();
+                        _knownModules.Add(name);
+                    }
+                    catch { }
+                }
+                Logger.Log($"SnapshotKnownModules: Cached {_knownModules.Count} modules");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("SnapshotKnownModules", ex);
+            }
+        }
+
+        private static void DetectNewModules()
+        {
+            try
+            {
+                var process = Process.GetCurrentProcess();
+                var currentModules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (ProcessModule module in process.Modules)
+                {
+                    try
+                    {
+                        string name = Path.GetFileName(module.FileName).ToLowerInvariant();
+                        currentModules.Add(name);
+
+                        if (!_knownModules.Contains(name) && !KnownGoodModule(name))
+                        {
+                            string modulePath = module.FileName.ToLowerInvariant();
+                            bool fromTrustedPath = modulePath.Contains(@"\windows\") ||
+                                                    modulePath.Contains(@"\windows\system32") ||
+                                                    modulePath.Contains(@"\windows\syswow64") ||
+                                                    modulePath.Contains(@"\windows\winsxs") ||
+                                                    modulePath.Contains(@"\dotnet\") ||
+                                                    modulePath.Contains(@"\microsoft.net\") ||
+                                                    modulePath.Contains(@"\program files\") ||
+                                                    modulePath.Contains(@"\program files (x86)\") ||
+                                                    modulePath.Contains(@"\programdata\") ||
+                                                    modulePath.Contains(@"\appdata\") ||
+                                                    modulePath.Contains(@"\modulepath") ||
+                                                    modulePath.Contains(@"\packages\");
+
+                            if (!fromTrustedPath)
+                            {
+                                Logger.Log($"CRITICAL: New DLL loaded from untrusted path: {name} at {module.FileName} — possible injection");
+                                _integrityCheckFailed = true;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                _knownModules.Clear();
+                foreach (string m in currentModules)
+                    _knownModules.Add(m);
+            }
+            catch { }
+        }
+
+        private static void DetectMemoryTampering()
+        {
+            try
+            {
+                IntPtr selfBase = GetModuleHandle(string.Empty);
+                if (selfBase == IntPtr.Zero) return;
+
+                IntPtr queryAddr = selfBase;
+                int checkedRegions = 0;
+
+                while (checkedRegions < 50)
+                {
+                    MEMORY_BASIC_INFORMATION mbi;
+                    int status = NtQueryVirtualMemory(GetCurrentProcess(), queryAddr, 0, out mbi, Marshal.SizeOf<MEMORY_BASIC_INFORMATION>(), out _);
+                    if (status != 0) break;
+                    if (mbi.BaseAddress == IntPtr.Zero) break;
+
+                    if (mbi.AllocationBase == selfBase && mbi.State == MEM_COMMIT)
+                    {
+                        if (mbi.Protect == PAGE_EXECUTE_READWRITE)
+                        {
+                            Logger.Log($"CRITICAL: RWX memory region at 0x{mbi.BaseAddress.ToInt64():X} size 0x{mbi.RegionSize.ToInt64():X} — unauthorized code modification");
+                            _integrityCheckFailed = true;
+                        }
+
+                        if (mbi.Protect == PAGE_READWRITE && (mbi.Type & 0x10000000) != 0)
+                        {
+                            Logger.Log($"WARNING: Writable code memory region at 0x{mbi.BaseAddress.ToInt64():X} — possible patching");
+                        }
+                    }
+
+                    long nextAddr = mbi.BaseAddress.ToInt64() + mbi.RegionSize.ToInt64();
+                    if (nextAddr <= queryAddr.ToInt64()) break;
+                    queryAddr = new IntPtr(nextAddr);
+                    checkedRegions++;
+                }
+            }
+            catch { }
+        }
+
+        private static void StartSelfFileWatcher()
+        {
+            try
+            {
+                string? exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrEmpty(exePath)) return;
+
+                _selfDirectory = Path.GetDirectoryName(exePath);
+                if (string.IsNullOrEmpty(_selfDirectory) || !Directory.Exists(_selfDirectory)) return;
+
+                _selfFileWatcher = new FileSystemWatcher(_selfDirectory)
+                {
+                    Filter = "*.*",
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                    IncludeSubdirectories = false,
+                    EnableRaisingEvents = false
+                };
+
+                _selfFileWatcher.Created += (s, e) =>
+                {
+                    string ext = Path.GetExtension(e.Name ?? "").ToLowerInvariant();
+                    if (ext == ".dll" || ext == ".exe")
+                    {
+                        Logger.Log($"CRITICAL: New file created in app directory: {e.FullPath} — possible DLL hijacking attempt");
+                        _integrityCheckFailed = true;
+                    }
+                };
+
+                _selfFileWatcher.Changed += (s, e) =>
+                {
+                    string name = Path.GetFileName(e.FullPath ?? "").ToLowerInvariant();
+                    if (name == "iauthbytes.exe" || name == "index.html" || name == "iauthbytes.dll")
+                    {
+                        Logger.Log($"CRITICAL: Core file modified on disk: {e.FullPath}");
+                        _integrityCheckFailed = true;
+                    }
+                };
+
+                _selfFileWatcher.EnableRaisingEvents = true;
+                Logger.Log($"StartSelfFileWatcher: Monitoring {_selfDirectory} for file changes");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("StartSelfFileWatcher", ex);
+            }
         }
 
         private static List<ThreatInfo> CheckDebuggerPresence()

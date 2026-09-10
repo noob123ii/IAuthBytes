@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace IAuthBytes
 {
@@ -29,6 +31,12 @@ namespace IAuthBytes
         private static readonly string AppDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "IAuthBytes");
         private static readonly string BaselineFile = Path.Combine(AppDataDir, "tamper_baseline.json");
+
+        private static FileSystemWatcher? _selfWatcher;
+        private static Timer? _selfIntegrityTimer;
+        private static byte[]? _selfExeHash;
+        private static long _selfExeSize;
+        private static readonly object _tamperLock = new();
 
         private static readonly HashSet<string> CriticalFiles = new(StringComparer.OrdinalIgnoreCase)
         {
@@ -258,6 +266,123 @@ namespace IAuthBytes
             if (bytes < 1024) return $"{bytes} B";
             if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
             return $"{bytes / (1024.0 * 1024.0):F1} MB";
+        }
+
+        public static void StartSelfProtection()
+        {
+            try
+            {
+                string? exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath)) return;
+
+                _selfExeSize = new FileInfo(exePath).Length;
+                byte[] exeBytes = File.ReadAllBytes(exePath);
+                using var sha = SHA256.Create();
+                _selfExeHash = sha.ComputeHash(exeBytes);
+
+                string? dir = Path.GetDirectoryName(exePath);
+                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+
+                _selfWatcher = new FileSystemWatcher(dir)
+                {
+                    Filter = "*.*",
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
+                    IncludeSubdirectories = false,
+                    EnableRaisingEvents = false
+                };
+
+                _selfWatcher.Created += (s, e) =>
+                {
+                    string ext = Path.GetExtension(e.Name ?? "").ToLowerInvariant();
+                    if (ext is ".dll" or ".exe")
+                    {
+                        Logger.Log($"TAMPER: Suspicious file created in install dir: {e.Name}");
+                        OnTamperDetected($"New executable created: {e.Name}");
+                    }
+                };
+
+                _selfWatcher.Changed += (s, e) =>
+                {
+                    string name = Path.GetFileName(e.FullPath ?? "").ToLowerInvariant();
+                    if (name == "iauthbytes.exe")
+                    {
+                        Logger.Log($"TAMPER: IAuthBytes.exe modified on disk!");
+                        OnTamperDetected("IAuthBytes executable modified on disk");
+                    }
+                    else if (name == "index.html")
+                    {
+                        Logger.Log($"TAMPER: index.html modified on disk!");
+                        OnTamperDetected("UI source modified on disk");
+                    }
+                    else if (name is "tamper_baseline.json" or "self_hash.txt")
+                    {
+                        Logger.Log($"TAMPER: Security file modified: {name}");
+                        OnTamperDetected($"Security file modified: {name}");
+                    }
+                };
+
+                _selfWatcher.EnableRaisingEvents = true;
+
+                _selfIntegrityTimer = new Timer(_ =>
+                {
+                    try
+                    {
+                        VerifySelfExeIntegrity();
+                    }
+                    catch { }
+                }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30));
+
+                Logger.Log("TamperDetector: Self-protection started");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("TamperDetector-StartSelfProtection", ex);
+            }
+        }
+
+        public static void StopSelfProtection()
+        {
+            _selfWatcher?.Dispose();
+            _selfWatcher = null;
+            _selfIntegrityTimer?.Dispose();
+            _selfIntegrityTimer = null;
+        }
+
+        private static void VerifySelfExeIntegrity()
+        {
+            try
+            {
+                string? exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath)) return;
+
+                long currentSize = new FileInfo(exePath).Length;
+                if (currentSize != _selfExeSize)
+                {
+                    Logger.Log($"TAMPER: IAuthBytes.exe size changed: {_selfExeSize} -> {currentSize}");
+                    OnTamperDetected($"Executable size changed: {currentSize} bytes (was {_selfExeSize})");
+                    return;
+                }
+
+                byte[] currentBytes = File.ReadAllBytes(exePath);
+                using var sha = SHA256.Create();
+                byte[] currentHash = sha.ComputeHash(currentBytes);
+
+                if (_selfExeHash != null && !currentHash.SequenceEqual(_selfExeHash))
+                {
+                    Logger.Log("TAMPER: IAuthBytes.exe hash changed!");
+                    OnTamperDetected("Executable content hash mismatch — binary modified");
+                }
+            }
+            catch { }
+        }
+
+        private static void OnTamperDetected(string description)
+        {
+            try
+            {
+                Logger.Log($"TAMPER ALERT: {description}");
+            }
+            catch { }
         }
     }
 }
