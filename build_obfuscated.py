@@ -103,7 +103,7 @@ SAFE_WORDS = {
     'onUpdateCheck', 'downloadUpdate', 'closeUpdateBanner',
     'onUpdateProgress', 'onUpdateError',
     'onGtFound', 'onGtNotFound', 'onScanProgress', 'onScanComplete',
-    'onGuardStarted', 'onGuardStopped', 'onRuntimeEvent',
+    'onGuardStarted', 'onGuardStopped', 'onRuntimeEvent', 'clearLog',
     'document', 'window', 'console', 'localStorage', 'JSON', 'Math',
     'Object', 'Array', 'String', 'Number', 'Boolean', 'RegExp', 'Date',
     'Error', 'Set', 'Map', 'WeakSet', 'Promise', 'setTimeout', 'setInterval',
