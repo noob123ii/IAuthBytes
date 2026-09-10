@@ -31,6 +31,9 @@ namespace IAuthBytes
         [DllImport("kernel32.dll")]
         private static extern IntPtr GetCurrentProcess();
 
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentThread();
+
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out int lpNumberOfBytesRead);
 
@@ -60,6 +63,82 @@ namespace IAuthBytes
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern int GetModuleFileNameEx(IntPtr hProcess, IntPtr hModule, [Out] StringBuilder lpBaseName, int nSize);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool Thread32First(IntPtr hSnapshot, ref THREADENTRY32 lpte);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool Thread32Next(IntPtr hSnapshot, ref THREADENTRY32 lpte);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool GetThreadContext(IntPtr hThread, ref CONTEXT64 lpContext);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool GetThreadContext(IntPtr hThread, ref CONTEXT32 lpContext);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr OpenThread(int dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationThread(IntPtr threadHandle, int threadInformationClass, ref IntPtr threadInformation, int threadInformationLength, IntPtr returnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct THREADENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ThreadID;
+            public uint th32OwnerProcessID;
+            public int tpBasePri;
+            public int tpDeltaPri;
+            public uint dwFlags;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct CONTEXT64
+        {
+            [FieldOffset(0x0)] public uint P1Home;
+            [FieldOffset(0x8)] public uint P2Home;
+            [FieldOffset(0x10)] public uint P3Home;
+            [FieldOffset(0x18)] public uint P4Home;
+            [FieldOffset(0x20)] public uint P5Home;
+            [FieldOffset(0x28)] public uint P6Home;
+            [FieldOffset(0x30)] public uint ContextFlags;
+            [FieldOffset(0x34)] public uint MxCsr;
+            [FieldOffset(0x38)] public short Cs;
+            [FieldOffset(0x3A)] public short Ds;
+            [FieldOffset(0x3C)] public short Es;
+            [FieldOffset(0x3E)] public short Fs;
+            [FieldOffset(0x40)] public short Gs;
+            [FieldOffset(0x42)] public short Ss;
+            [FieldOffset(0x44)] public uint EFlags;
+            [FieldOffset(0x48)] public ulong Dr0;
+            [FieldOffset(0x50)] public ulong Dr1;
+            [FieldOffset(0x58)] public ulong Dr2;
+            [FieldOffset(0x60)] public ulong Dr3;
+            [FieldOffset(0x68)] public ulong Dr6;
+            [FieldOffset(0x70)] public ulong Dr7;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct CONTEXT32
+        {
+            [FieldOffset(0x0)] public uint ContextFlags;
+            [FieldOffset(0x1C)] public uint Dr0;
+            [FieldOffset(0x20)] public uint Dr1;
+            [FieldOffset(0x24)] public uint Dr2;
+            [FieldOffset(0x28)] public uint Dr3;
+            [FieldOffset(0x2C)] public uint Dr6;
+            [FieldOffset(0x30)] public uint Dr7;
+        }
+
+        private const int THREAD_QUERY_INFORMATION = 0x0040;
+        private const int THREAD_GET_CONTEXT = 0x0008;
+        private const int CONTEXT_DEBUG_REGISTERS = 0x00100010;
+        private const int CONTEXT_AMD64 = 0x00100000;
 
         private const int PROCESS_QUERY_INFORMATION = 0x0400;
         private const int PROCESS_VM_READ = 0x0010;
@@ -99,6 +178,10 @@ namespace IAuthBytes
             threats.AddRange(CheckHandleAbuse());
             threats.AddRange(CheckModuleInjection());
             threats.AddRange(CheckSelfIntegrity(gtPath));
+            threats.AddRange(CheckThreadHijacking());
+            threats.AddRange(CheckHardwareBreakpoints());
+            threats.AddRange(CheckEATHooks());
+            threats.AddRange(CheckHookEngineSignatures());
             threats.AddRange(RunSelfTest());
 
             return threats;
@@ -377,6 +460,35 @@ namespace IAuthBytes
                                 hooked = true;
                                 hookType = "MOV RAX+JMP hook";
                             }
+                            else if (firstBytes[0] == 0xB8 && firstBytes[5] == 0xFF && firstBytes[6] == 0xE0)
+                            {
+                                hooked = true;
+                                hookType = "MOV EAX+JMP hook";
+                            }
+                            else if (firstBytes[0] == 0x48 && firstBytes[1] == 0xB9 && firstBytes[10] == 0xFF && firstBytes[11] == 0xE1)
+                            {
+                                hooked = true;
+                                hookType = "MOV RCX+JMP hook";
+                            }
+                            else if (firstBytes[0] == 0x48 && firstBytes[1] == 0xBA && firstBytes[10] == 0xFF && firstBytes[11] == 0xE2)
+                            {
+                                hooked = true;
+                                hookType = "MOV RDX+JMP hook";
+                            }
+                            else if (firstBytes[0] == 0x48 && firstBytes[1] == 0xB8 && firstBytes[10] == 0xFF && firstBytes[11] == 0xD0)
+                            {
+                                hooked = true;
+                                hookType = "MOV RAX+CALL hook";
+                            }
+                            else if (firstBytes[0] == 0xC2 && firstBytes[3] == 0xC3)
+                            {
+                                hooked = true;
+                                hookType = "RET imm hook";
+                            }
+                            else if (firstBytes[0] == 0xC3 && firstBytes.Length > 1 && firstBytes[1] != 0x00)
+                            {
+                                // suspicious: RET followed by non-zero byte suggests trampoline
+                            }
                             else if (firstBytes[0] == 0x90)
                             {
                                 int nopCount = 0;
@@ -520,7 +632,27 @@ namespace IAuthBytes
                                             if (!string.IsNullOrEmpty(procName))
                                             {
                                                 string lowerProc = procName.ToLowerInvariant();
-                                                bool isSuspicious = lowerProc.Contains("inject") ||
+                                                bool isExcluded = lowerProc == "explorer.exe" ||
+                                                                   lowerProc == "cmd.exe" ||
+                                                                   lowerProc == "powershell.exe" ||
+                                                                   lowerProc == "pwsh.exe" ||
+                                                                   lowerProc == "conhost.exe" ||
+                                                                   lowerProc == "sihost.exe" ||
+                                                                   lowerProc == "taskhostw.exe" ||
+                                                                   lowerProc == "searchindexer.exe" ||
+                                                                   lowerProc == "searchprotocolhost.exe" ||
+                                                                   lowerProc == "ctfmon.exe" ||
+                                                                   lowerProc == "dwm.exe" ||
+                                                                   lowerProc == "csrss.exe" ||
+                                                                   lowerProc == "lsass.exe" ||
+                                                                   lowerProc == "services.exe" ||
+                                                                   lowerProc == "svchost.exe" ||
+                                                                   lowerProc == "winlogon.exe" ||
+                                                                   lowerProc == "wininit.exe" ||
+                                                                   lowerProc == "smss.exe";
+
+                                                bool isSuspicious = !isExcluded && (
+                                                                   lowerProc.Contains("inject") ||
                                                                    lowerProc.Contains("hook") ||
                                                                    lowerProc.Contains("cheat") ||
                                                                    lowerProc.Contains("mod") ||
@@ -529,10 +661,10 @@ namespace IAuthBytes
                                                                    lowerProc.Contains("x64dbg") ||
                                                                    lowerProc.Contains("olly") ||
                                                                    lowerProc.Contains("dnspy") ||
-                                                                   lowerProc.Contains("process") ||
-                                                                   lowerProc.Contains("explorer") ||
-                                                                   lowerProc.Contains("powershell") ||
-                                                                   lowerProc.Contains("cmd");
+                                                                   lowerProc.Contains("ce") ||
+                                                                   lowerProc.Contains("trainer") ||
+                                                                   lowerProc.Contains("memory") ||
+                                                                   lowerProc.Contains("scan"));
 
                                                 if (isSuspicious)
                                                 {
@@ -809,6 +941,296 @@ namespace IAuthBytes
             return threats;
         }
 
+        private static List<ThreatInfo> CheckThreadHijacking()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                int currentPid = GetCurrentProcessId();
+                IntPtr hSnapshot = CreateToolhelp32Snapshot(0x00000004u, 0);
+                if (hSnapshot == IntPtr.Zero || hSnapshot == (IntPtr)(-1))
+                    return threats;
+
+                try
+                {
+                    THREADENTRY32 te = new();
+                    te.dwSize = (uint)Marshal.SizeOf(typeof(THREADENTRY32));
+
+                    if (Thread32First(hSnapshot, ref te))
+                    {
+                        do
+                        {
+                            if ((int)te.th32OwnerProcessID == currentPid) continue;
+
+                            try
+                            {
+                                IntPtr hThread = OpenThread(THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT, false, te.th32ThreadID);
+                                if (hThread == IntPtr.Zero) continue;
+
+                                try
+                                {
+                                    // Check if thread is suspended in our process (potential hijack)
+                                    if (te.tpBasePri == 0 && te.tpDeltaPri == 0)
+                                    {
+                                        // Thread with zero priority in external process targeting ours is suspicious
+                                        // Try to read its start address via NtQueryInformationThread
+                                        IntPtr startAddr = IntPtr.Zero;
+                                        int status = NtQueryInformationThread(hThread, 9 /* ThreadQuerySetWin32StartAddress */, ref startAddr, IntPtr.Size, IntPtr.Zero);
+                                        if (status == 0 && startAddr != IntPtr.Zero)
+                                        {
+                                            // Check if start address is in a known module range or executable memory
+                                            IntPtr selfBase = GetModuleHandle(string.Empty);
+                                            if (selfBase != IntPtr.Zero)
+                                            {
+                                                long addrLong = startAddr.ToInt64();
+                                                long baseLong = selfBase.ToInt64();
+                                                if (addrLong >= baseLong && addrLong < baseLong + 0x10000000)
+                                                {
+                                                    threats.Add(new ThreatInfo
+                                                    {
+                                                        FileName = "Thread Hijack",
+                                                        FilePath = "",
+                                                        ThreatType = "Anti-Hook",
+                                                        FileSize = "",
+                                                        Severity = Severity.Critical,
+                                                        Description = $"Remote thread in PID {te.th32OwnerProcessID} with start address in IAuthBytes memory range (possible thread hijack)"
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                finally
+                                {
+                                    CloseHandle(hThread);
+                                }
+                            }
+                            catch { }
+                        }
+                        while (Thread32Next(hSnapshot, ref te));
+                    }
+                }
+                finally
+                {
+                    CloseHandle(hSnapshot);
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> CheckHardwareBreakpoints()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                IntPtr hThread = GetCurrentThread();
+                bool is64Bit = IntPtr.Size == 8;
+
+                if (is64Bit)
+                {
+                    CONTEXT64 ctx = new();
+                    ctx.ContextFlags = CONTEXT_AMD64 | 0x10; // CONTEXT_DEBUG_REGISTERS
+                    if (GetThreadContext(hThread, ref ctx))
+                    {
+                        if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR0 set: 0x{ctx.Dr0:X16}" });
+                        if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR1 set: 0x{ctx.Dr1:X16}" });
+                        if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR2 set: 0x{ctx.Dr2:X16}" });
+                        if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR3 set: 0x{ctx.Dr3:X16}" });
+                    }
+                }
+                else
+                {
+                    CONTEXT32 ctx = new();
+                    ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+                    if (GetThreadContext(hThread, ref ctx))
+                    {
+                        if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR0 set: 0x{ctx.Dr0:X8}" });
+                        if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR1 set: 0x{ctx.Dr1:X8}" });
+                        if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR2 set: 0x{ctx.Dr2:X8}" });
+                        if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR3 set: 0x{ctx.Dr3:X8}" });
+                    }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> CheckEATHooks()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                var process = Process.GetCurrentProcess();
+                foreach (ProcessModule module in process.Modules)
+                {
+                    try
+                    {
+                        if (module.FileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                            module.FileName.Contains("IAuthBytes"))
+                            continue;
+
+                        IntPtr modBase = module.BaseAddress;
+                        byte[] peHeader = new byte[4096];
+                        if (!ReadProcessMemory(GetCurrentProcess(), modBase, peHeader, peHeader.Length, out int hdrRead) || hdrRead < 64)
+                            continue;
+
+                        if (peHeader[0] != 0x4D || peHeader[1] != 0x5A) continue;
+
+                        int peOffset = BitConverter.ToInt32(peHeader, 0x3C);
+                        if (peOffset + 24 >= peHeader.Length) continue;
+                        if (peHeader[peOffset] != 0x50 || peHeader[peOffset + 1] != 0x45) continue;
+
+                        // Parse export directory
+                        int exportDirRva = BitConverter.ToInt32(peHeader, peOffset + 24 + 96 + 20);
+                        int exportDirSize = BitConverter.ToInt32(peHeader, peOffset + 24 + 96 + 24);
+                        int numFunctions = BitConverter.ToInt32(peHeader, peOffset + 24 + 96 + 20 + 4);
+
+                        if (exportDirRva == 0 || exportDirSize == 0 || numFunctions == 0) continue;
+
+                        // Read export section
+                        byte[] exportBytes = new byte[exportDirSize + 256];
+                        IntPtr exportAddr = IntPtr.Add(modBase, exportDirRva);
+                        if (!ReadProcessMemory(GetCurrentProcess(), exportAddr, exportBytes, exportBytes.Length, out int expRead) || expRead < 40)
+                            continue;
+
+                        int functionsRva = BitConverter.ToInt32(exportBytes, 20);
+                        int numNames = BitConverter.ToInt32(exportBytes, 24);
+                        int nameOrdinalRva = BitConverter.ToInt32(exportBytes, 28);
+
+                        if (functionsRva == 0) continue;
+
+                        // Read function RVAs
+                        byte[] funcBytes = new byte[numFunctions * 4];
+                        IntPtr funcAddr = IntPtr.Add(modBase, functionsRva);
+                        if (!ReadProcessMemory(GetCurrentProcess(), funcAddr, funcBytes, funcBytes.Length, out int funcRead) || funcRead < numFunctions * 4)
+                            continue;
+
+                        long modBaseLong = modBase.ToInt64();
+                        long modEndLong = modBaseLong + module.ModuleMemorySize;
+
+                        int hookedCount = 0;
+                        for (int i = 0; i < numFunctions && i < 1000; i++)
+                        {
+                            int funcRva = BitConverter.ToInt32(funcBytes, i * 4);
+                            if (funcRva == 0) continue;
+
+                            long funcAddrLong = modBaseLong + funcRva;
+                            if (funcAddrLong < modBaseLong || funcAddrLong > modEndLong)
+                            {
+                                hookedCount++;
+                            }
+                        }
+
+                        if (hookedCount > 0)
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = Path.GetFileName(module.FileName),
+                                FilePath = module.FileName,
+                                ThreatType = "Anti-Hook",
+                                FileSize = "",
+                                Severity = Severity.Critical,
+                                Description = $"EAT hook detected: {hookedCount} export(s) point outside module memory range"
+                            });
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        private static List<ThreatInfo> CheckHookEngineSignatures()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                var process = Process.GetCurrentProcess();
+                foreach (ProcessModule module in process.Modules)
+                {
+                    try
+                    {
+                        if (module.FileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                            module.FileName.Contains("IAuthBytes"))
+                            continue;
+
+                        IntPtr modBase = module.BaseAddress;
+                        int modSize = module.ModuleMemorySize;
+                        if (modSize < 1024) continue;
+
+                        byte[] textSection = new byte[Math.Min(modSize, 0x100000)];
+                        if (!ReadProcessMemory(GetCurrentProcess(), modBase, textSection, textSection.Length, out int bytesRead) || bytesRead < 100)
+                            continue;
+
+                        // EasyHook trampoline signature: push addr; mov eax, addr; jmp eax; nop...
+                        byte[] easyHookSig = { 0x68, 0x00, 0x00, 0x00, 0x00, 0xB8, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE0 };
+                        // MinHook: jmp [rip+offset] pattern 0xFF 0x25 followed by relative offset
+                        // Detours: typically uses 0xE9 JMP with trampoline
+
+                        for (int i = 0; i < bytesRead - 12; i++)
+                        {
+                            // EasyHook signature
+                            if (textSection[i] == 0x68 && textSection[i + 5] == 0xB8 && textSection[i + 10] == 0xFF && textSection[i + 11] == 0xE0)
+                            {
+                                uint pushAddr = BitConverter.ToUInt32(textSection, i + 1);
+                                uint movAddr = BitConverter.ToUInt32(textSection, i + 6);
+                                if (pushAddr == movAddr && movAddr != 0)
+                                {
+                                    threats.Add(new ThreatInfo
+                                    {
+                                        FileName = Path.GetFileName(module.FileName),
+                                        FilePath = module.FileName,
+                                        ThreatType = "Anti-Hook",
+                                        FileSize = "",
+                                        Severity = Severity.Critical,
+                                        Description = $"Hook engine trampoline (EasyHook pattern) at offset 0x{i:X}"
+                                    });
+                                    break;
+                                }
+                            }
+
+                            // Detours-style: FF 25 with relative offset to IAT
+                            if (textSection[i] == 0xFF && textSection[i + 1] == 0x25)
+                            {
+                                int relOffset = BitConverter.ToInt32(textSection, i + 2);
+                                long targetAddr = (long)i + 6 + relOffset;
+                                if (targetAddr < 0 || targetAddr > textSection.Length)
+                                {
+                                    // Target is outside .text — likely a detour trampoline
+                                    if (i > 0 && textSection[i - 1] == 0xCC) // preceded by INT3
+                                    {
+                                        threats.Add(new ThreatInfo
+                                        {
+                                            FileName = Path.GetFileName(module.FileName),
+                                            FilePath = module.FileName,
+                                            ThreatType = "Anti-Hook",
+                                            FileSize = "",
+                                            Severity = Severity.High,
+                                            Description = $"Possible Detours trampoline at offset 0x{i:X} (indirect JMP past INT3)"
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
         public static List<ThreatInfo> RunSelfTest()
         {
             var threats = new List<ThreatInfo>();
@@ -1040,9 +1462,6 @@ namespace IAuthBytes
             if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
             return $"{bytes / (1024.0 * 1024.0):F1} MB";
         }
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);

@@ -1,8 +1,9 @@
 """
-IAuthBytes JS Obfuscator v4 — hardened build
+IAuthBytes JS Obfuscator v5 — hardened build
 Features:
   - Runtime-derived XOR key (navigator.userAgent + screen + performance)
   - XOR+Base64 string encryption with shuffled array (polymorphic)
+  - Template literal encryption
   - Internal identifier renaming to short random names
   - HTML comment stripping
   - SubtleCrypto SHA-256 function body integrity
@@ -13,6 +14,8 @@ Features:
   - MutationObserver for DOM tamper detection
   - Obfuscated numeric constants (arithmetic expressions)
   - Opaque predicates using runtime values
+  - toString override on critical objects
+  - Console warning banner
 """
 import re, random, string, base64, os, hashlib, time
 
@@ -29,12 +32,14 @@ def build_hash(s):
     return h
 
 def obf_num(n):
-    """Obfuscate a number as an XOR arithmetic expression. Only XOR preserves the value: (a ^ (a ^ n)) == n."""
+    """Obfuscate a number as an XOR arithmetic expression. Only XOR preserves the value."""
     if n < 5:
         return str(n)
     a = random.randint(1, 0xFFFF)
     b = a ^ n
-    return f"({a}^{b})"
+    c = random.randint(1, 0xFF)
+    d = c ^ 0
+    return f"({a}^{b}^{c}^{d})"
 
 def tokenize_js(text):
     i = 0
@@ -185,17 +190,26 @@ def build():
 
     tokens = list(tokenize_js(script_text))
 
+    # Collect strings AND template literals for encryption
     strings = []
     str_idx = {}
     for tok_type, tok_val in tokens:
-        if tok_type != 'str': continue
-        raw = tok_val[1:-1]
-        if len(raw) < 2 or raw in str_idx: continue
-        if re.match(r'^[\d.xXeE+\-]+$', raw): continue
-        str_idx[raw] = len(strings)
-        strings.append(raw)
+        if tok_type == 'str':
+            raw = tok_val[1:-1]
+            if len(raw) < 2 or raw in str_idx: continue
+            if re.match(r'^[\d.xXeE+\-]+$', raw): continue
+            str_idx[raw] = len(strings)
+            strings.append(raw)
+        elif tok_type == 'tpl':
+            # Encrypt template literal content (without backticks and ${} expressions)
+            raw = tok_val[1:-1]
+            if len(raw) >= 2 and raw not in str_idx:
+                # Only encrypt simple templates without expressions
+                if '${' not in raw:
+                    str_idx[raw] = len(strings)
+                    strings.append(raw)
 
-    print(f"Encrypting {len(strings)} strings...")
+    print(f"Encrypting {len(strings)} strings + template literals...")
 
     indices = list(range(len(strings)))
     random.shuffle(indices)
@@ -241,7 +255,6 @@ def build():
     fn_names = ['onGtFound', 'onGtNotFound', 'onScanProgress', 'onScanComplete',
                 'onGuardStarted', 'onGuardStopped', 'onRuntimeEvent']
 
-    # --- Apply renames and string encryption to token stream FIRST ---
     def mapped_idx(original_idx):
         return shuffle_map[original_idx]
 
@@ -255,6 +268,14 @@ def build():
             if raw in str_idx:
                 parts.append(f"_0xs({mapped_idx(str_idx[raw])})")
             else:
+                parts.append(tok_val)
+        elif tok_type == 'tpl':
+            raw = tok_val[1:-1]
+            if raw in str_idx and '${' not in raw:
+                # Simple template without expressions — encrypt as string
+                parts.append(f"_0xs({mapped_idx(str_idx[raw])})")
+            else:
+                # Complex template with expressions — leave as-is
                 parts.append(tok_val)
         elif tok_type == 'id':
             is_prop_access = (prev_token == '.' or prev_token == '?')
@@ -270,7 +291,6 @@ def build():
 
     body_script = ''.join(parts)
 
-    # --- Compute function body hashes from OBFUSCATED script ---
     fn_hashes = []
     for fn in fn_names:
         pat = re.compile(r'function\s+' + re.escape(fn) + r'\s*\([^)]*\)\s*\{')
@@ -293,29 +313,72 @@ def build():
     print(f"Computed {len(fn_hashes)} function hashes from obfuscated source...")
 
     # --- Build decoder ---
-    # Key is fixed (deterministic from build), hidden behind XOR chains
-    # Environment values are used for anti-debug, NOT key derivation
     r1 = random.randint(1, 0xFF)
-    r2 = r1 ^ XOR_KEY  # so r1 ^ r2 = XOR_KEY
+    r2 = r1 ^ XOR_KEY
     r3 = random.randint(1, 0xFF)
-    r4 = r3 ^ 0  # so r3 ^ r4 = 0 (neutral)
+    r4 = r3 ^ 0
     decoder = ""
     decoder += f"var _0xs=(function(){{"
     decoder += f"var _a={obf_num(r1)};var _b={obf_num(r2)};"
     decoder += f"var _c={obf_num(r3)};var _d={obf_num(r4)};"
-    # Compute key through opaque chain (a^b gives real key, c^d is 0/noop)
     decoder += f"var _dk=(_a^_b^_c^_d)&0xFF;"
     decoder += f"var _da=[{arr_str}];"
     decoder += f"function _dec(_i){{var _b2=atob(_da[_i]);var _r='';"
     decoder += f"for(var _j=0;_j<_b2.length;_j++)_r+=String.fromCharCode(_b2.charCodeAt(_j)^_dk);return _r;}}"
     decoder += f"return _dec;}})();"
 
-    # --- Build minimal IIFE — no body-wiping, no toString override ---
+    # --- Anti-debug + DOM tamper + Object.freeze + toString override ---
     ad = "(function(){"
 
-    # Object.create tracking (harmless, no body-wiping)
+    # 1. Object.create tracking
     ad += "var _oc=Object.create;var _dd=new WeakSet();"
     ad += "Object.create=function(){var o=_oc.apply(this,arguments);_dd.add(o);return o;};"
+
+    # 2. Anti-debug: timing check
+    r_t1 = random.randint(1, 0xFF)
+    r_t2 = r_t1 ^ 0x42
+    ad += f"var _ta={obf_num(r_t1)};var _tb={obf_num(r_t2)};"
+    ad += "var _t0=performance.now();"
+    ad += "for(var _ti=0;_ti<100;_ti++){}"
+    ad += "if((performance.now()-_t0)>50){"  # >50ms for 100 loops = debugger
+    ad += "document.body.innerHTML='<h1 style=\"color:red;text-align:center;margin-top:40vh\">Debugger detected — access denied</h1>';"
+    ad += "throw new Error('Anti-debug');}"
+
+    # 3. Anti-debug: Function constructor trap
+    ad += "var _fd=Function;"
+    ad += "Function=function(){if(arguments.length>0&&arguments[arguments.length-1].indexOf('debugger')!==-1)throw new Error('Blocked');return _fd.apply(this,arguments);};"
+
+    # 4. DevTools detection via element size trick
+    ad += "(function(){var _e=document.createElement('div');"
+    ad += "Object.defineProperty(_e,'id',{get:function(){throw new Error('DevTools');}});"
+    ad += "try{console.debug(_e)}catch(e){"
+    ad += "document.body.innerHTML='<h1 style=\"color:red;text-align:center;margin-top:40vh\">DevTools detected — access denied</h1>';"
+    ad += "throw new Error('Anti-debug');}"
+    ad += "console.debug=function(){}})();"
+
+    # 5. toString override on critical objects to prevent source inspection
+    ad += "var _to=Object.create(null);"
+    ad += "_to['']=function(){return '[obfuscated]';};"
+    ad += "var _ogp=Object.getPrototypeOf;"
+    ad += "Object.getPrototypeOf=function(o){var p=_ogp.call(this,o);if(typeof o==='function'){var n=o.name;if(n&&_to['']){var w=Object.create(p);w.toString=_to[''];return w;}}return p;};"
+
+    # 6. MutationObserver for DOM tamper detection
+    ad += "var _mo=new MutationObserver(function(muts){"
+    ad += "for(var _mi=0;_mi<muts.length;_mi++){"
+    ad += "var _m=muts[_mi];"
+    if len(SAFE_WORDS) > 0:
+        ad += "if(_m.target&&_m.target.id==='fxCanvas'&&_m.attributeName==='style'){"
+        ad += "var _s=_m.target.style.cssText;"
+        ad += "if(_s.indexOf('filter')===-1||_s.indexOf('blur')===-1){"
+        ad += "_m.target.style.filter='none';"
+        ad += "}}}"
+    ad += "});"
+    ad += "_mo.observe(document.body,{attributes:true,childList:true,subtree:true});"
+
+    # 7. Console warning banner
+    warn_colors = ['color:red;font-size:20px;font-weight:bold', 'color:orange;font-size:14px', 'color:gray;font-size:12px']
+    ad += f"console.log('%c IAuthBytes %c Protected by obfuscation %c Do not modify',"
+    ad += f"'{warn_colors[0]}','{warn_colors[1]}','{warn_colors[2]}');"
 
     ad += "})();"
 
