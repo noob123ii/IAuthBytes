@@ -714,9 +714,9 @@ function applyBlur() {
     c.style.filter = 'none';
   }
   var slider = document.getElementById('blurSlider');
-  if (slider) slider.value = settings.bgBlurAmount || 4;
+  if (slider) slider.value = settings.bgBlurAmount != null ? settings.bgBlurAmount : 4;
   var valEl = document.getElementById('blurVal');
-  if (valEl) valEl.textContent = (settings.bgBlurAmount || 4) + 'px';
+  if (valEl) valEl.textContent = (settings.bgBlurAmount != null ? settings.bgBlurAmount : 4) + 'px';
 }
 
 function startFx(name) {
