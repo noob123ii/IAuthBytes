@@ -38,6 +38,23 @@ namespace IAuthBytes
 
                 string html = LoadEmbeddedHtml();
                 Browser.CoreWebView2.NavigateToString(html);
+
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(2000);
+                    var update = await UpdateChecker.CheckForUpdateAsync();
+                    string json = JsonSerializer.Serialize(new
+                    {
+                        updateAvailable = update.UpdateAvailable,
+                        currentVersion = update.CurrentVersion,
+                        latestVersion = update.LatestVersion,
+                        downloadUrl = update.DownloadUrl,
+                        releaseNotes = update.ReleaseNotes,
+                        error = update.Error
+                    });
+                    Dispatcher.BeginInvoke(() =>
+                        Browser.CoreWebView2.ExecuteScriptAsync($"onUpdateCheck({json})"));
+                });
             }
             catch (Exception ex)
             {
@@ -107,6 +124,31 @@ namespace IAuthBytes
                 case "scanMemory":
                     int pid = json.RootElement.TryGetProperty("pid", out var pidEl) ? pidEl.GetInt32() : 0;
                     if (pid > 0) ScanMemory(pid);
+                    break;
+                case "checkUpdate":
+                    _ = Task.Run(async () =>
+                    {
+                        var update = await UpdateChecker.CheckForUpdateAsync();
+                        string uj = JsonSerializer.Serialize(new
+                        {
+                            updateAvailable = update.UpdateAvailable,
+                            currentVersion = update.CurrentVersion,
+                            latestVersion = update.LatestVersion,
+                            downloadUrl = update.DownloadUrl,
+                            releaseNotes = update.ReleaseNotes,
+                            error = update.Error
+                        });
+                        Dispatcher.BeginInvoke(() =>
+                            Browser.CoreWebView2.ExecuteScriptAsync($"onUpdateCheck({uj})"));
+                    });
+                    break;
+                case "openUpdateUrl":
+                    string url = json.RootElement.TryGetProperty("url", out var urlEl) ? urlEl.GetString() ?? "" : "";
+                    UpdateChecker.OpenDownloadPage(url);
+                    break;
+                case "quarantineRemove":
+                    string rmPath = json.RootElement.TryGetProperty("path", out var rmEl) ? rmEl.GetString() ?? "" : "";
+                    QuarantineOrRemove(rmPath, true);
                     break;
             }
         }
@@ -230,6 +272,34 @@ namespace IAuthBytes
             catch (Exception ex)
             {
                 Logger.LogException("Quarantine", ex);
+            }
+        }
+
+        private void QuarantineOrRemove(string path, bool forceRemove)
+        {
+            try
+            {
+                if (forceRemove)
+                {
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                        Logger.Log($"Removed (critical): {path}");
+                    }
+                    else if (Directory.Exists(path))
+                    {
+                        Directory.Delete(path, true);
+                        Logger.Log($"Removed directory (critical): {path}");
+                    }
+                }
+                else
+                {
+                    QuarantineFile(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("QuarantineOrRemove", ex);
             }
         }
 

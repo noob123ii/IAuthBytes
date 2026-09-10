@@ -100,6 +100,7 @@ SAFE_WORDS = {
     'minimizeWindow', 'maximizeWindow', 'closeWindow', 'dragWindow',
     'hideToast', 'showToast', 'quarantineFile', 'toggleGuard', 'toggleSetting', 'setTheme', 'setFx',
     'toggleBlur', 'setBlurAmount', 'applyBlur',
+    'onUpdateCheck', 'downloadUpdate', 'closeUpdateBanner',
     'onGtFound', 'onGtNotFound', 'onScanProgress', 'onScanComplete',
     'onGuardStarted', 'onGuardStopped', 'onRuntimeEvent',
     'document', 'window', 'console', 'localStorage', 'JSON', 'Math',
