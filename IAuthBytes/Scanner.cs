@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -68,6 +69,78 @@ namespace IAuthBytes
             "Gorilla Tag.exe", "UnityCrashHandler64.exe", "Unity Hub.exe",
             "Steam.exe", "steam.exe"
         };
+
+        private readonly record struct WhitelistEntry(string Sha256, long Size);
+
+        private static readonly Dictionary<string, WhitelistEntry> VerifiedDlls = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["UnityPlayer.dll"] = new("3703A5C9ABC613C75157CA76C9C7326FC09FC27932E625FCF0F668DE09F7BFFB", 34048944),
+            ["steam_api64.dll"] = new("1ADD7F151FA644870A735AE86E68D1F019F296130D8E7C0A7ED3ECC7482DCCBC", 300392),
+            ["Assembly-CSharp.dll"] = new("2D4B5CA3CCFE10EABDE247A3E5AEFB43DBA7835919EA6341F8CBB2B8FE343373", 6949888),
+            ["Assembly-CSharp-firstpass.dll"] = new("5F0EFDE70A1FC5E1219F11F1DD0FCF98747AB5BE809256520CBA5815936BAFB3", 9728),
+            ["mscorlib.dll"] = new("44C8BA3B568C49A6A635680E72770CD9E3230369B60A357A37799D7921AC1539", 4632064),
+            ["System.dll"] = new("B7A3726624BD596D8B6CD34E399B0322B2178D8E561BADD521D0F4D9AED31EA4", 2641920),
+            ["System.Core.dll"] = new("718CF4DA7301DFE2997AE245A2D6EA2278AF13109785DC5697473790CE5D1726", 1113088),
+            ["System.Xml.dll"] = new("0F40CC28E9593BAFE254E02AC2BAA090E2D13B1005BF580D9A1B82C11F0FC7AC", 3160064),
+            ["System.Drawing.dll"] = new("595E2A5131F624C20CBF0809FF3F2D12FE52C634B13EF2429567157A8CF34D2D", 489984),
+            ["netstandard.dll"] = new("6AE62E082DC494A2433984177F60CA4DB5FAE69B1F360A8B33754172B310B8C5", 90112),
+            ["mono-2.0-bdwgc.dll"] = new("61D0320B550C41E38FD81F4E425A54FE4A6CAEAE7F9E3EDEE0898941A0F1E75B", 7831464),
+            ["MonoPosixHelper.dll"] = new("6BECA59CC9D947A90BC6964744666F6A3A9491150EA457C74FD7E336B74498D9", 611240),
+            ["BepInEx.dll"] = new("8255B28902886085C578B9E427D3073C97002DB85176D2090CDEDA90EF14CE70", 128512),
+            ["BepInEx.Preloader.dll"] = new("55D3895351A9D16B63B6F35F1C01B44AC650979E853D0BD3A442B92A082AF64F", 43008),
+            ["0Harmony.dll"] = new("1A21CC03424FC82C3DD1346905D16494536B9595AE4162228D99FB7C285C1031", 204800),
+            ["HarmonyXInterop.dll"] = new("7CE1342D3AFA0334B59A3E38C0AED15E162B9ABE9D46F95F34BE44AF47F3B493", 23552),
+            ["MonoMod.RuntimeDetour.dll"] = new("40E49BB314391CD7BDDC2644F8553EEBA92C194B940836B103DF16955C464E0C", 105984),
+            ["MonoMod.Utils.dll"] = new("9D1495F147AC93C4F81F84538C1A326E8F8A6AEFC78D6289D798F3CE1162C5E9", 187904),
+            ["Mono.Cecil.dll"] = new("7AE470288FFF4A402899C254D0A76CEFEF55877F5C54F96E83C797CC5BB6E2F6", 339456),
+            ["Mono.Cecil.Pdb.dll"] = new("174DB44A067F58561510AF746F3CAEB032037762C57A31C8D9EE32DB25174984", 86528),
+            ["Mono.Cecil.Rocks.dll"] = new("54AC539FB5DDC8B44C0E9ACD0FCB7324F89D1A072EDF8EBC1B06DD691E3D3927", 27648),
+            ["Mono.Security.dll"] = new("8A613947E8CDC1050B1C6AF230D63F5835500BD4C6265FDD93CABEB8D428216A", 241152),
+            ["Newtonsoft.Json.dll"] = new("A56146202232958F46BD6A28B5A7DA166AEA123EE0D646735A46E5C341DFBF1F", 691712),
+            ["UnityEngine.dll"] = new("4466FBEC2EAF3B3CE2A9CF05A1A10A45981C26184EE13948AEB02DCE133F47A7", 175024),
+            ["UnityEngine.CoreModule.dll"] = new("F9F3F3A0B78245C9F2D66C74B0EBF060B5B8D2EA33E29E0159F1AD98E324DCBF", 1874352),
+            ["UnityEngine.UI.dll"] = new("FCB526125687CFCB3E99CEAF44218EFC15DBDC3529B1192B34022DFE48275947", 275968),
+            ["PhotonUnityNetworking.dll"] = new("B2C2C3B32CE623B85A1A1CC183140E6761EFD01644584CBD7DC6087E27249DA5", 107520),
+            ["PhotonRealtime.dll"] = new("77DBA80A1983639EE89D300EA5976173D5B5A4DB50BBF527016FBA3D8A685516", 105472),
+            ["Photon3Unity3D.dll"] = new("A205694A622AF561D95F6D9D72D34880DB24ACD663B2B6BE3EF88FAA1DB16255", 239616),
+            ["Oculus.VR.dll"] = new("382A1394AE22AF0ADDC4F66750B6AB9B2D908D3A44C9CF225F34FF2C62C8A200", 1197056),
+            ["Oculus.Platform.dll"] = new("5DEDE81CC407C78DE355C876E7130D9F6320AC3B6EB5921E099F25A386BE50D1", 199168),
+            ["openvr_api.dll"] = new("B49B90C3CB3B56304C3F2D546CB4A86568326C18A6071A14D3DAEFFE5F2596F2", 819664),
+        };
+
+        private static readonly Dictionary<string, WhitelistEntry> VerifiedExes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Gorilla Tag.exe"] = new("E40B4D8552EE26816F18360DFEC0BE5D258E622ABA1F2485E4166CAADAABFA8C", 667648),
+        };
+
+        private static bool VerifyWhitelist(string filePath, byte[] fileBytes)
+        {
+            string fileName = Path.GetFileName(filePath);
+
+            if (VerifiedDlls.TryGetValue(fileName, out var expectedDll))
+            {
+                if (fileBytes.Length != expectedDll.Size) return false;
+                using var sha = SHA256.Create();
+                string hash = Convert.ToHexString(sha.ComputeHash(fileBytes));
+                return hash.Equals(expectedDll.Sha256, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (VerifiedExes.TryGetValue(fileName, out var expectedExe))
+            {
+                if (fileBytes.Length != expectedExe.Size) return false;
+                using var sha = SHA256.Create();
+                string hash = Convert.ToHexString(sha.ComputeHash(fileBytes));
+                return hash.Equals(expectedExe.Sha256, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
+        }
+
+        private static bool IsKnownGoodByName(string fileName)
+        {
+            return KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName) ||
+                   KnownGtDlls.Contains(fileName);
+        }
 
         private static readonly HashSet<int> SuspiciousPorts = new()
         {
@@ -900,7 +973,20 @@ namespace IAuthBytes
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
             bool isPlugin = filePath.Contains("plugins", StringComparison.OrdinalIgnoreCase);
             bool isGtDll = KnownGtDlls.Contains(fileName);
-            bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+            bool nameIsKnownGood = IsKnownGoodByName(fileName);
+            bool isKnownGood = nameIsKnownGood && VerifyWhitelist(filePath, fileBytes);
+
+            if (nameIsKnownGood && !isKnownGood)
+            {
+                threats.Add(new ThreatInfo
+                {
+                    FileName = fileName,
+                    FilePath = filePath,
+                    ThreatType = "Whitelist mismatch",
+                    Severity = Severity.Critical,
+                    Description = "Whitelist hash/size mismatch — expected known-good DLL but hash or size differs (possible fake)"
+                });
+            }
 
             threats.AddRange(DetectGrazeByBytes(filePath, fileBytes, fileName));
             threats.AddRange(DetectHiddenFile(filePath, fileName));
@@ -963,7 +1049,7 @@ namespace IAuthBytes
                 string ext = Path.GetExtension(filePath).ToLowerInvariant();
                 if (ext != ".graze")
                 {
-                    bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+                    bool isKnownGood = IsKnownGoodByName(fileName) && VerifyWhitelist(filePath, fileBytes);
                     if (!isKnownGood)
                     {
                         threats.Add(new ThreatInfo
@@ -1014,7 +1100,7 @@ namespace IAuthBytes
                     if ((attrs & FILE_ATTRIBUTE_HIDDEN) != 0)
                     {
                         string ext = Path.GetExtension(filePath).ToLowerInvariant();
-                        bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+                        bool isKnownGood = IsKnownGoodByName(fileName);
 
                         if (!isKnownGood && (ext == ".graze" || ext == ".dll" || ext == ".exe"))
                         {
@@ -1091,7 +1177,7 @@ namespace IAuthBytes
 
                     if (realExtensions.Contains(last) && secondLast.Length >= 2 && secondLast.Length <= 4)
                     {
-                        bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+                        bool isKnownGood = IsKnownGoodByName(fileName);
                         if (!isKnownGood)
                         {
                             threats.Add(new ThreatInfo
@@ -1176,7 +1262,7 @@ namespace IAuthBytes
 
             if (fileBytes.Length < 4) return threats;
 
-            bool isKnownGood = KnownGoodDlls.Contains(fileName) || KnownGoodExes.Contains(fileName);
+            bool isKnownGood = IsKnownGoodByName(fileName) && VerifyWhitelist(filePath, fileBytes);
             if (isKnownGood) return threats;
 
             bool hasMz = fileBytes[0] == 0x4D && fileBytes[1] == 0x5A;
