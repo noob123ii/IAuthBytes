@@ -208,7 +208,8 @@ IAuthBytes/
 │   └── icon.ico
 ├── HookTest/
 │   ├── Injector/                       — hook injection test harness
-│   └── RuntimeTest/                    — runtime detection test harness (10 tests)
+│   ├── RuntimeTest/                    — runtime detection test harness (10 tests)
+│   └── AttackTest/                     — comprehensive attack test (29 tests: hooking, tampering, HTML injection, obfuscation bypass)
 ├── UpdateDetection/
 │   └── LatestUpdate.txt                — version metadata with SHA-256 integrity
 ├── build_obfuscated.py                 — JS obfuscation pipeline v5
