@@ -133,7 +133,7 @@ namespace IAuthBytes
                 return hash.Equals(expectedExe.Sha256, StringComparison.OrdinalIgnoreCase);
             }
 
-            return false;
+            return true;
         }
 
         private static bool IsKnownGoodByName(string fileName)
@@ -866,6 +866,13 @@ namespace IAuthBytes
 
                         string fileName = Path.GetFileName(filePath);
 
+                        if (string.Equals(fileName, "IAuthBytes.exe", StringComparison.OrdinalIgnoreCase) ||
+                            filePath.StartsWith(AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase))
+                        {
+                            filesScanned++;
+                            continue;
+                        }
+
                         onProgress?.Invoke(new ScanProgress
                         {
                             Phase = phaseIdx,
@@ -913,7 +920,15 @@ namespace IAuthBytes
                 try
                 {
                     var antiHookThreats = AntiHook.RunAntiHookCheck(gtPath);
-                    result.Threats.AddRange(antiHookThreats);
+                    foreach (var t in antiHookThreats)
+                    {
+                        if (string.Equals(t.FileName, "Self-Test", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Logger.Log($"AntiHook self-test: {t.Description}");
+                            continue;
+                        }
+                        result.Threats.Add(t);
+                    }
                 }
                 catch { }
 
@@ -1175,7 +1190,10 @@ namespace IAuthBytes
                     string last = parts[^1];
                     string[] realExtensions = { "dll", "exe", "scr", "com", "bat", "cmd", "vbs", "ps1", "js", "wsf" };
 
-                    if (realExtensions.Contains(last) && secondLast.Length >= 2 && secondLast.Length <= 4)
+                    string[] bepInExPatterns = { "bie5", "bie6", "bepinex", "mono", "il2cpp", "net48", "net6" };
+                    bool isBepInExPlugin = bepInExPatterns.Contains(secondLast) || bepInExPatterns.Contains(parts[^3]);
+
+                    if (realExtensions.Contains(last) && secondLast.Length >= 2 && secondLast.Length <= 4 && !isBepInExPlugin)
                     {
                         bool isKnownGood = IsKnownGoodByName(fileName);
                         if (!isKnownGood)
