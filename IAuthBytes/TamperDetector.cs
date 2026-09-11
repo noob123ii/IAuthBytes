@@ -110,8 +110,8 @@ namespace IAuthBytes
                         buildId = ExtractValue(line);
                     else if (line.StartsWith("\"VersionConfigOsArch\""))
                         version = ExtractValue(line);
-                    else if (line.StartsWith("\"LastUpdated\""))
-                        version = ExtractValue(line);
+                    else if (line.StartsWith("\"Version\""))
+                        version = string.IsNullOrEmpty(version) ? ExtractValue(line) : version;
                 }
             }
             catch { }

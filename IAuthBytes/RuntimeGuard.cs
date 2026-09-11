@@ -205,6 +205,7 @@ namespace IAuthBytes
                 var childProcs = GetChildProcesses(gtProcess.Id);
                 foreach (var child in childProcs)
                 {
+                    if (_seenPids.Count > 5000) _seenPids.Clear();
                     if (_seenPids.Contains(child.Id)) continue;
                     _seenPids.Add(child.Id);
 
@@ -308,6 +309,7 @@ namespace IAuthBytes
                     if (conn.State != TcpState.Established) continue;
 
                     string key = $"{conn.RemoteEndPoint.Address}:{conn.RemoteEndPoint.Port}";
+                    if (_seenConnections.Count > 5000) _seenConnections.Clear();
                     if (_seenConnections.Contains(key)) continue;
                     _seenConnections.Add(key);
 
@@ -394,6 +396,7 @@ namespace IAuthBytes
                     try
                     {
                         if (proc.Id == 0 || proc.Id == 4) continue;
+                        if (_seenSysPids.Count > 10000) _seenSysPids.Clear();
                         if (_seenSysPids.Contains(proc.Id)) continue;
                         _seenSysPids.Add(proc.Id);
 
@@ -481,6 +484,7 @@ namespace IAuthBytes
                     if (port < 1024) continue;
 
                     string key = $"listen:{port}";
+                    if (_seenPorts.Count > 5000) _seenPorts.Clear();
                     if (_seenPorts.Contains(key)) continue;
                     _seenPorts.Add(key);
 

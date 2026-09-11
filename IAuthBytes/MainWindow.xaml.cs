@@ -81,7 +81,10 @@ namespace IAuthBytes
             try { json = JsonDocument.Parse(raw); }
             catch { return; }
 
-            string action = json.RootElement.GetProperty("action").GetString() ?? "";
+            using (json)
+            {
+                if (!json.RootElement.TryGetProperty("action", out var actionEl)) return;
+                string action = actionEl.GetString() ?? "";
 
             switch (action)
             {
@@ -157,6 +160,7 @@ namespace IAuthBytes
                     string rmPath = json.RootElement.TryGetProperty("path", out var rmEl) ? rmEl.GetString() ?? "" : "";
                     QuarantineOrRemove(rmPath, true);
                     break;
+            }
             }
         }
 

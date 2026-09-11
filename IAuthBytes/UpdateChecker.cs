@@ -208,7 +208,35 @@ namespace IAuthBytes
 
                 onProgress?.Invoke("Extracting...");
                 Logger.Log($"UpdateChecker: Extracting zip ({new FileInfo(zipPath).Length} bytes)");
-                ZipFile.ExtractToDirectory(zipPath, extractDir);
+
+                // Manual extraction with Zip Slip prevention
+                string fullExtractDir = Path.GetFullPath(extractDir);
+                using (var archive = ZipFile.OpenRead(zipPath))
+                {
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (string.IsNullOrEmpty(entry.Name) && string.IsNullOrEmpty(entry.FullName))
+                            continue;
+
+                        string destPath = Path.GetFullPath(Path.Combine(fullExtractDir, entry.FullName));
+                        if (!destPath.StartsWith(fullExtractDir, StringComparison.OrdinalIgnoreCase))
+                        {
+                            Logger.Log($"UpdateChecker: Zip Slip attempt blocked: {entry.FullName}");
+                            throw new InvalidOperationException($"Zip entry attempts path traversal: {entry.FullName}");
+                        }
+
+                        if (entry.Name.Length == 0)
+                        {
+                            // Directory entry
+                            Directory.CreateDirectory(destPath);
+                        }
+                        else
+                        {
+                            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                            entry.ExtractToFile(destPath, overwrite: true);
+                        }
+                    }
+                }
 
                 // Find the actual app files in the extracted content
                 // They may be nested in a subfolder (e.g. IAuthBytes-1.1.0/)

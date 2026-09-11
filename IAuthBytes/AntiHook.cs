@@ -85,6 +85,9 @@ namespace IAuthBytes
         [DllImport("ntdll.dll")]
         private static extern int NtQueryInformationThread(IntPtr threadHandle, int threadInformationClass, ref IntPtr threadInformation, int threadInformationLength, IntPtr returnLength);
 
+        [DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationThread(IntPtr threadHandle, int threadInformationClass, IntPtr threadInformation, int threadInformationLength, IntPtr returnLength);
+
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool VirtualQuery(IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, int dwLength);
 
@@ -268,20 +271,21 @@ namespace IAuthBytes
         [StructLayout(LayoutKind.Explicit)]
         private struct CONTEXT32
         {
-            [FieldOffset(0x0)] public uint ContextFlags;
-            [FieldOffset(0x1C)] public uint Dr0;
-            [FieldOffset(0x20)] public uint Dr1;
-            [FieldOffset(0x24)] public uint Dr2;
-            [FieldOffset(0x28)] public uint Dr3;
-            [FieldOffset(0x2C)] public uint Dr6;
-            [FieldOffset(0x30)] public uint Dr7;
+            [FieldOffset(0x00)] public uint ContextFlags;
+            [FieldOffset(0x04)] public uint Dr0;
+            [FieldOffset(0x08)] public uint Dr1;
+            [FieldOffset(0x0C)] public uint Dr2;
+            [FieldOffset(0x10)] public uint Dr3;
+            [FieldOffset(0x14)] public uint Dr6;
+            [FieldOffset(0x18)] public uint Dr7;
         }
 
         private const int THREAD_QUERY_INFORMATION = 0x0040;
         private const int THREAD_GET_CONTEXT = 0x0008;
         private const int THREAD_SUSPEND_RESUME = 0x0002;
         private const int THREAD_QUERY_LIMITED_INFORMATION = 0x0800;
-        private const int CONTEXT_DEBUG_REGISTERS = 0x00100010;
+        private const int CONTEXT_DEBUG_REGISTERS_X86 = 0x00000010;
+        private const int CONTEXT_DEBUG_REGISTERS_X64 = 0x00100010;
         private const int CONTEXT_AMD64 = 0x00100000;
 
         private const int PROCESS_QUERY_INFORMATION = 0x0400;
@@ -798,7 +802,7 @@ namespace IAuthBytes
                             _integrityCheckFailed = true;
                         }
 
-                        if (mbi.Protect == PAGE_READWRITE && (mbi.Type & 0x10000000) != 0)
+                        if (mbi.Protect == PAGE_READWRITE && (mbi.Type & MEM_IMAGE) != 0)
                         {
                             Logger.Log($"WARNING: Writable code memory region at 0x{mbi.BaseAddress.ToInt64():X} — possible patching");
                         }
@@ -1277,14 +1281,30 @@ namespace IAuthBytes
                     int numberOfHandles = Marshal.ReadInt32(handleInfoPtr);
                     IntPtr currentPtr = IntPtr.Add(handleInfoPtr, IntPtr.Size + IntPtr.Size);
 
+                    // SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX layout (x64):
+                    //   0x00 Object (8), 0x08 UniqueProcessId (8), 0x10 HandleValue (8),
+                    //   0x18 GrantedAccess (4), 0x1C CreatorBackTraceIndex (2),
+                    //   0x1E ObjectTypeIndex (2), 0x20 HandleAttributes (4), 0x24 Reserved (4)
+                    // Total stride: 40 bytes on x64, 16 bytes on x86
+                    int entryStride = IntPtr.Size == 8 ? 40 : 16;
+
                     for (int i = 0; i < numberOfHandles && i < 10000; i++)
                     {
                         try
                         {
-                            long objectPtr = Marshal.ReadInt64(currentPtr);
-                            long handleValue = Marshal.ReadInt64(currentPtr, IntPtr.Size);
-                            int ownerPid = Marshal.ReadInt32(currentPtr, 2 * IntPtr.Size);
-                            int accessMask = Marshal.ReadInt32(currentPtr, 2 * IntPtr.Size + 4);
+                            long ownerPid;
+                            int accessMask;
+
+                            if (IntPtr.Size == 8)
+                            {
+                                ownerPid = Marshal.ReadInt64(currentPtr, 8);  // UniqueProcessId at +0x08
+                                accessMask = Marshal.ReadInt32(currentPtr, 24); // GrantedAccess at +0x18
+                            }
+                            else
+                            {
+                                ownerPid = Marshal.ReadInt32(currentPtr, 4);  // UniqueProcessId at +0x04
+                                accessMask = Marshal.ReadInt32(currentPtr, 10); // GrantedAccess at +0x0A
+                            }
 
                             if (ownerPid != currentPid && ownerPid > 0)
                             {
@@ -1297,7 +1317,7 @@ namespace IAuthBytes
                                     string ownerName = "";
                                     try
                                     {
-                                        using var ownerProcess = Process.GetProcessById(ownerPid);
+                                        using var ownerProcess = Process.GetProcessById((int)ownerPid);
                                         ownerName = ownerProcess.ProcessName;
                                     }
                                     catch { ownerName = $"PID {ownerPid}"; }
@@ -1314,7 +1334,7 @@ namespace IAuthBytes
                                 }
                             }
 
-                            currentPtr = IntPtr.Add(currentPtr, 2 * IntPtr.Size + 4 * IntPtr.Size);
+                            currentPtr = IntPtr.Add(currentPtr, entryStride);
                         }
                         catch { }
                     }
@@ -1357,7 +1377,7 @@ namespace IAuthBytes
                         {
                             string name = Path.GetFileName(moduleName.ToString()).ToLowerInvariant();
 
-                            if (!string.IsNullOrEmpty(name) && !name.EndsWith(".exe") && !name.EndsWith(".dll") && !name.EndsWith(".exe"))
+                            if (!string.IsNullOrEmpty(name) && !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase))
                             {
                                 if (!KnownGoodModule(name))
                                 {
@@ -1604,34 +1624,42 @@ namespace IAuthBytes
 
                             try
                             {
-                                IntPtr hThread = OpenThread(THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, false, te.th32ThreadID);
+                                IntPtr hThread = OpenThread(THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION | THREAD_SUSPEND_RESUME, false, te.th32ThreadID);
                                 if (hThread == IntPtr.Zero) continue;
 
                                 try
                                 {
-                                    if (is64Bit)
+                                    SuspendThread(hThread);
+                                    try
                                     {
-                                        CONTEXT64 ctx = new();
-                                        ctx.ContextFlags = CONTEXT_AMD64 | 0x10; // CONTEXT_DEBUG_REGISTERS
-                                        if (GetThreadContext(hThread, ref ctx))
+                                        if (is64Bit)
                                         {
-                                            if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR0 = 0x{ctx.Dr0:X16}" });
-                                            if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR1 = 0x{ctx.Dr1:X16}" });
-                                            if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR2 = 0x{ctx.Dr2:X16}" });
-                                            if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR3 = 0x{ctx.Dr3:X16}" });
+                                            CONTEXT64 ctx = new();
+                                            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS_X64; // CONTEXT_AMD64 | 0x10
+                                            if (GetThreadContext(hThread, ref ctx))
+                                            {
+                                                if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR0 = 0x{ctx.Dr0:X16}" });
+                                                if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR1 = 0x{ctx.Dr1:X16}" });
+                                                if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR2 = 0x{ctx.Dr2:X16}" });
+                                                if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR3 = 0x{ctx.Dr3:X16}" });
+                                            }
+                                        }
+                                        else
+                                        {
+                                            CONTEXT32 ctx = new();
+                                            ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS_X86;
+                                            if (GetThreadContext(hThread, ref ctx))
+                                            {
+                                                if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR0 = 0x{ctx.Dr0:X8}" });
+                                                if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR1 = 0x{ctx.Dr1:X8}" });
+                                                if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR2 = 0x{ctx.Dr2:X8}" });
+                                                if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR3 = 0x{ctx.Dr3:X8}" });
+                                            }
                                         }
                                     }
-                                    else
+                                    finally
                                     {
-                                        CONTEXT32 ctx = new();
-                                        ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-                                        if (GetThreadContext(hThread, ref ctx))
-                                        {
-                                            if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR0 = 0x{ctx.Dr0:X8}" });
-                                            if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR1 = 0x{ctx.Dr1:X8}" });
-                                            if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR2 = 0x{ctx.Dr2:X8}" });
-                                            if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR3 = 0x{ctx.Dr3:X8}" });
-                                        }
+                                        ResumeThread(hThread);
                                     }
                                 }
                                 finally
@@ -1681,11 +1709,13 @@ namespace IAuthBytes
                         if (peHeader[peOffset] != 0x50 || peHeader[peOffset + 1] != 0x45) continue;
 
                         // Parse export directory
-                        int exportDirRva = BitConverter.ToInt32(peHeader, peOffset + 24 + 96 + 20);
-                        int exportDirSize = BitConverter.ToInt32(peHeader, peOffset + 24 + 96 + 24);
-                        int numFunctions = BitConverter.ToInt32(peHeader, peOffset + 24 + 96 + 20 + 4);
+                        // Data directories start at peOffset + 24 + 96 (PE32) or peOffset + 24 + 112 (PE32+)
+                        bool isPE32Plus = peHeader[peOffset + 24] == 0x20 && peHeader[peOffset + 25] == 0x0B;
+                        int dataDirsOffset = isPE32Plus ? 112 : 96;
+                        int exportDirRva = BitConverter.ToInt32(peHeader, peOffset + 24 + dataDirsOffset);
+                        int exportDirSize = BitConverter.ToInt32(peHeader, peOffset + 24 + dataDirsOffset + 4);
 
-                        if (exportDirRva == 0 || exportDirSize == 0 || numFunctions == 0) continue;
+                        if (exportDirRva == 0 || exportDirSize == 0) continue;
 
                         // Read export section
                         byte[] exportBytes = new byte[exportDirSize + 256];
@@ -1693,11 +1723,15 @@ namespace IAuthBytes
                         if (!ReadProcessMemory(GetCurrentProcess(), exportAddr, exportBytes, exportBytes.Length, out int expRead) || expRead < 40)
                             continue;
 
-                        int functionsRva = BitConverter.ToInt32(exportBytes, 20);
-                        int numNames = BitConverter.ToInt32(exportBytes, 24);
-                        int nameOrdinalRva = BitConverter.ToInt32(exportBytes, 28);
+                        // IMAGE_EXPORT_DIRECTORY layout:
+                        // +0x00 Characteristics(4), +0x04 TimeDateStamp(4), +0x08 MajorVersion(2),
+                        // +0x0A MinorVersion(2), +0x0C Name(4), +0x10 Base(4),
+                        // +0x14 NumberOfFunctions(4), +0x18 NumberOfNames(4),
+                        // +0x1C AddressOfFunctions(4), +0x20 AddressOfNames(4), +0x24 AddressOfNameOrdinals(4)
+                        int numFunctions = BitConverter.ToInt32(exportBytes, 0x14);
+                        int functionsRva = BitConverter.ToInt32(exportBytes, 0x1C);
 
-                        if (functionsRva == 0) continue;
+                        if (numFunctions == 0 || functionsRva == 0) continue;
 
                         // Read function RVAs
                         byte[] funcBytes = new byte[numFunctions * 4];
@@ -2042,7 +2076,7 @@ namespace IAuthBytes
                 IntPtr teb = NtCurrentTeb();
                 if (teb != IntPtr.Zero)
                 {
-                    IntPtr peb = Marshal.ReadIntPtr(teb, 0x60); // PEB at TEB+0x60 (x64)
+                    IntPtr peb = Marshal.ReadIntPtr(teb, IntPtr.Size == 8 ? 0x60 : 0x30); // PEB at TEB+0x60 (x64) or TEB+0x30 (x86)
                     if (peb != IntPtr.Zero)
                     {
                         // BeingDebugged at PEB+0x2
@@ -2071,12 +2105,15 @@ namespace IAuthBytes
                             });
                         }
 
-                        // ProcessHeap flags at PEB+0x18 -> Heap+0x40 (Flags) and Heap+0x70 (ForceFlags)
+                        // ProcessHeap flags at PEB+0x18 -> Heap+0x40 (Flags) and Heap+0x70 (ForceFlags) on x64
+                        // x86: Heap+0x04 (Flags) and Heap+0x08 (ForceFlags)
                         IntPtr processHeap = Marshal.ReadIntPtr(peb, 0x18);
                         if (processHeap != IntPtr.Zero)
                         {
-                            int heapFlags = Marshal.ReadInt32(processHeap, 0x40);
-                            int heapForceFlags = Marshal.ReadInt32(processHeap, 0x70);
+                            int heapFlagsOffset = IntPtr.Size == 8 ? 0x40 : 0x04;
+                            int heapForceFlagsOffset = IntPtr.Size == 8 ? 0x70 : 0x08;
+                            int heapFlags = Marshal.ReadInt32(processHeap, heapFlagsOffset);
+                            int heapForceFlags = Marshal.ReadInt32(processHeap, heapForceFlagsOffset);
                             if (heapForceFlags != 0)
                             {
                                 threats.Add(new ThreatInfo
@@ -2169,26 +2206,32 @@ namespace IAuthBytes
                                 try
                                 {
                                     // Check thread state — alertable threads can receive APCs
-                                    IntPtr threadState = IntPtr.Zero;
-                                    int stateStatus = NtQueryInformationThread(hThread, 0 /* ThreadBasicInformation */, ref threadState, IntPtr.Size, IntPtr.Zero);
-                                    if (stateStatus == 0)
+                                    // THREAD_BASIC_INFORMATION: ExitStatus(4), TebBaseAddress(ptr), ClientId(2*ptr), AffinityMask(ptr), Priority(4), BasePriority(4)
+                                    int tbiSize = IntPtr.Size == 8 ? 48 : 28;
+                                    IntPtr tbiBuf = Marshal.AllocHGlobal(tbiSize);
+                                    try
                                     {
-                                        // ThreadState is at offset 0 of THREAD_BASIC_INFORMATION
-                                        int state = Marshal.ReadInt32(threadState, 0);
-                                        if (state == 5) // Waiting state — potentially alertable
+                                        int stateStatus = NtQueryInformationThread(hThread, 0 /* ThreadBasicInformation */, tbiBuf, tbiSize, IntPtr.Zero);
+                                        if (stateStatus == 0)
                                         {
-                                            // Check alertable flag at offset 8 of THREAD_BASIC_INFORMATION
-                                            byte alertable = Marshal.ReadByte(threadState, 8);
-                                            if (alertable != 0)
+                                            // ThreadState is at offset 0 of THREAD_BASIC_INFORMATION
+                                            int state = Marshal.ReadInt32(tbiBuf, 0);
+                                            if (state == 5) // Waiting state — potentially alertable
                                             {
+                                                // Alertable flag is embedded in KTHREAD state, not directly in THREAD_BASIC_INFORMATION.
+                                                // We flag Waiting threads as potentially alertable (conservative detection).
                                                 threats.Add(new ThreatInfo
                                                 {
                                                     FileName = "APC", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
-                                                    Severity = Severity.High,
-                                                    Description = $"Thread {te.th32ThreadID} is alertable — can receive APC injection"
+                                                    Severity = Severity.Medium,
+                                                    Description = $"Thread {te.th32ThreadID} is in Waiting state — potentially alertable to APC injection"
                                                 });
                                             }
                                         }
+                                    }
+                                    finally
+                                    {
+                                        Marshal.FreeHGlobal(tbiBuf);
                                     }
                                 }
                                 finally
