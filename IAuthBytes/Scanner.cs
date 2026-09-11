@@ -172,7 +172,13 @@ namespace IAuthBytes
             "Self-deletion", "Anti-sandbox", "DLL search order hijacking",
             "Process Doppelgänging", "Environment variable exfiltration",
             "Screenshot + exfil combo", "Network share enumeration",
-            "Certificate/credential theft", "String obfuscation"
+            "Certificate/credential theft", "String obfuscation",
+            "APC injection", "Thread hijacking", "Module stomping",
+            "Direct syscall abuse", "Advanced anti-analysis", "Fileless execution",
+            "LOLBin abuse", "Kerberos attack", "Reflection-based injection",
+            "Shellcode execution pattern", "Registry persistence",
+            "Startup folder persistence", "COM hijacking",
+            "Email exfiltration", "FTP exfiltration", "Cloud exfiltration"
         };
 
         private static List<ThreatInfo> DetectPeThreats(string filePath, byte[] fileBytes, PeAnalyzer.PeInfo pe, bool isPlugin, bool isGtDll, bool isKnownGood)
@@ -594,6 +600,140 @@ namespace IAuthBytes
             if (hasKeychain && (hasUploadExfil || hasDiscord || hasTelegram))
             {
                 strongCount++; reasons.Add("Certificate/credential theft");
+            }
+
+            // === NEW DETECTIONS v2 ===
+
+            // Process injection via APC
+            bool hasApcQueue = HasPattern("QueueUserAPC") || HasPattern("NtQueueApcThread") || HasPattern("NtQueueApcThreadEx");
+            bool hasApcTarget = HasPattern("OpenProcess") && HasPattern("WriteProcessMemory");
+            if (hasApcQueue && hasApcTarget)
+            {
+                strongCount++; reasons.Add("APC injection");
+            }
+
+            // Thread hijacking
+            bool hasThreadHijack = HasPattern("SuspendThread") && HasPattern("GetThreadContext") &&
+                                   HasPattern("SetThreadContext") && HasPattern("ResumeThread");
+            if (hasThreadHijack)
+            {
+                strongCount++; reasons.Add("Thread hijacking");
+            }
+
+            // Module stomping
+            bool hasModuleStomp = HasPattern("LoadLibrary") && HasPattern("VirtualAllocEx") &&
+                                  HasPattern("WriteProcessMemory") && HasPattern("NtCreateThreadEx");
+            if (hasModuleStomp && HasPattern("GetProcAddress"))
+            {
+                strongCount++; reasons.Add("Module stomping");
+            }
+
+            // Syscall abuse
+            bool hasSyscall = HasPattern("NtCreateThreadEx") && HasPattern("NtMapViewOfSection") &&
+                              HasPattern("NtProtectVirtualMemory") && HasPattern("NtWriteVirtualMemory");
+            if (hasSyscall)
+            {
+                strongCount++; reasons.Add("Direct syscall abuse");
+            }
+
+            // More anti-analysis patterns
+            int antiDbgCount2 = new[] {
+                HasPattern("IsDebuggerPresent"), HasPattern("CheckRemoteDebuggerPresent"),
+                HasPattern("NtQueryInformationProcess"), HasPattern("OutputDebugString"),
+                HasPattern("NtSetInformationThread"), HasPattern("GetTickCount64"),
+                HasPattern("QueryPerformanceCounter"), HasPattern("rdtsc"),
+                HasPattern("NtQuerySystemInformation"), HasPattern("NtClose")
+            }.Count(x => x);
+            if (antiDbgCount2 >= 4)
+            {
+                strongCount++; reasons.Add("Advanced anti-analysis");
+            }
+
+            // Fileless malware patterns
+            bool hasFileless = HasPattern("VirtualAlloc") && HasPattern("VirtualProtect") &&
+                               HasPattern("NtCreateThreadEx") && HasPattern("FromBase64String");
+            if (hasFileless && (HasPattern("Assembly.Load") || HasPattern("IntPtr")))
+            {
+                strongCount++; reasons.Add("Fileless execution");
+            }
+
+            // Living-off-the-land binaries
+            bool hasLolbin = HasPattern("cmd.exe") && HasPattern("/c") &&
+                             (HasPattern("certutil") || HasPattern("mshta") || HasPattern("rundll32") ||
+                              HasPattern("regsvr32") || HasPattern("bitsadmin") || HasPattern("msbuild"));
+            if (hasLolbin && (HasPattern("http") || HasPattern("ftp") || HasPattern("download")))
+            {
+                strongCount++; reasons.Add("LOLBin abuse");
+            }
+
+            // Kerberoasting / AD attack patterns
+            bool hasKerbAttack = HasPattern("Kerberos") && HasPattern("TGT") &&
+                                 (HasPattern("KerberosRequestorSecurityToken") || HasPattern("RC4"));
+            if (hasKerbAttack)
+            {
+                strongCount++; reasons.Add("Kerberos attack");
+            }
+
+            // Supply chain injection patterns
+            bool hasSupplyChain = HasPattern("Assembly.Load") && HasPattern("System.Reflection") &&
+                                  HasPattern("Activator.CreateInstance") && HasPattern("MethodInfo");
+            if (hasSupplyChain && (HasPattern("Private") || HasPattern("BindingFlags")))
+            {
+                strongCount++; reasons.Add("Reflection-based injection");
+            }
+
+            // Cobalt Strike / red team patterns
+            bool hasCobaltStrike = HasPattern("VirtualAlloc") && HasPattern("VirtualProtect") &&
+                                   HasPattern("CreateThread") && HasPattern("WaitForSingleObject");
+            if (hasCobaltStrike && HasPattern("0x00") && HasPattern("mprotect"))
+            {
+                strongCount++; reasons.Add("Shellcode execution pattern");
+            }
+
+            // More persistence mechanisms
+            bool hasPersistReg = HasPattern("CurrentVersion\\Run") || HasPattern("CurrentVersion\\RunOnce") ||
+                                 HasPattern("CurrentVersion\\Explorer\\Shell Folders") ||
+                                 HasPattern("CurrentVersion\\Explorer\\User Shell Folders");
+            if (hasPersistReg && (hasLoadLib || HasPattern("CreateProcess") || HasPattern("ShellExecute")))
+            {
+                strongCount++; reasons.Add("Registry persistence");
+            }
+
+            bool hasFolderPersist = HasPattern("Startup") && HasPattern(".lnk") &&
+                                    (HasPattern("Shell32") || HasPattern("IPersistFile"));
+            if (hasFolderPersist)
+            {
+                strongCount++; reasons.Add("Startup folder persistence");
+            }
+
+            // COM hijacking
+            bool hasComHijack = HasPattern("InprocServer32") || HasPattern("CLSID") &&
+                                HasPattern("RegisterServer");
+            if (hasComHijack && (hasLoadLib || hasGetProcAddress))
+            {
+                strongCount++; reasons.Add("COM hijacking");
+            }
+
+            // More data exfiltration patterns
+            bool hasMailExfil = HasPattern("SmtpClient") && HasPattern("NetworkCredential") &&
+                                (HasPattern("EnableSsl") || HasPattern("Port"));
+            if (hasMailExfil)
+            {
+                strongCount++; reasons.Add("Email exfiltration");
+            }
+
+            bool hasFtpExfil = HasPattern("FtpWebRequest") || HasPattern("WebClient") &&
+                               HasPattern("ftp://");
+            if (hasFtpExfil)
+            {
+                strongCount++; reasons.Add("FTP exfiltration");
+            }
+
+            bool hasCloudExfil = HasPattern("blob.core.windows.net") || HasPattern("s3.amazonaws.com") ||
+                                 HasPattern("drive.google.com") || HasPattern("onedrive.live.com");
+            if (hasCloudExfil && (hasUploadExfil || HasPattern("WebClient")))
+            {
+                strongCount++; reasons.Add("Cloud exfiltration");
             }
 
             int strongReasonCount = reasons.Count(r => StrongIndicators.Contains(r));

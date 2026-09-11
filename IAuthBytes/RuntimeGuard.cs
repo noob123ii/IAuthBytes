@@ -543,7 +543,13 @@ namespace IAuthBytes
 
             if (lower.Contains("hook") || lower.Contains("inject") || lower.Contains("cheat") ||
                 lower.Contains("exploit") || lower.Contains("payload") || lower.Contains("loader") ||
-                lower.Contains("injector") || lower.Contains("proxy"))
+                lower.Contains("injector") || lower.Contains("proxy") ||
+                lower.Contains("stealer") || lower.Contains("grabber") || lower.Contains("clipper") ||
+                lower.Contains("rat") || lower.Contains("trojan") || lower.Contains("backdoor") ||
+                lower.Contains("keylog") || lower.Contains("screenshot") || lower.Contains("webcam") ||
+                lower.Contains("cryptominer") || lower.Contains("miner") || lower.Contains("xmrig") ||
+                lower.Contains("reverse") || lower.Contains("shell") || lower.Contains("beacon") ||
+                lower.Contains("cobalt") || lower.Contains("meterpreter") || lower.Contains("empire"))
                 return true;
 
             return false;
@@ -645,6 +651,40 @@ namespace IAuthBytes
                         Encoding.Unicode.GetBytes("exodus"),
                         Encoding.Unicode.GetBytes("metamask"),
                         Encoding.Unicode.GetBytes("phantom"),
+                        // v2: Additional memory patterns
+                        Encoding.ASCII.GetBytes("SetWindowsHookEx"),
+                        Encoding.ASCII.GetBytes("GetAsyncKeyState"),
+                        Encoding.ASCII.GetBytes("GetForegroundWindow"),
+                        Encoding.ASCII.GetBytes("BitBlt"),
+                        Encoding.ASCII.GetBytes("GetClipboardData"),
+                        Encoding.ASCII.GetBytes("OpenClipboard"),
+                        Encoding.ASCII.GetBytes("capCreateCaptureWindow"),
+                        Encoding.ASCII.GetBytes("avicap32"),
+                        Encoding.ASCII.GetBytes("waveInOpen"),
+                        Encoding.ASCII.GetBytes("WasapiCapture"),
+                        Encoding.ASCII.GetBytes("ReadProcessMemory"),
+                        Encoding.ASCII.GetBytes("VirtualAllocEx"),
+                        Encoding.ASCII.GetBytes("WriteProcessMemory"),
+                        Encoding.ASCII.GetBytes("CreateRemoteThread"),
+                        Encoding.ASCII.GetBytes("NtUnmapViewOfSection"),
+                        Encoding.ASCII.GetBytes("SetThreadContext"),
+                        Encoding.ASCII.GetBytes("QueueUserAPC"),
+                        Encoding.ASCII.GetBytes("SuspendThread"),
+                        Encoding.ASCII.GetBytes("NtQueryInformationProcess"),
+                        Encoding.ASCII.GetBytes("IsDebuggerPresent"),
+                        Encoding.ASCII.GetBytes("CheckRemoteDebuggerPresent"),
+                        Encoding.ASCII.GetBytes("CryptUnprotectData"),
+                        Encoding.ASCII.GetBytes("DPAPI"),
+                        Encoding.ASCII.GetBytes("lsass"),
+                        Encoding.ASCII.GetBytes("Lsass"),
+                        Encoding.ASCII.GetBytes("RunDll32"),
+                        Encoding.Unicode.GetBytes("SetWindowsHookEx"),
+                        Encoding.Unicode.GetBytes("GetAsyncKeyState"),
+                        Encoding.Unicode.GetBytes("ReadProcessMemory"),
+                        Encoding.Unicode.GetBytes("VirtualAllocEx"),
+                        Encoding.Unicode.GetBytes("WriteProcessMemory"),
+                        Encoding.Unicode.GetBytes("CryptUnprotectData"),
+                        Encoding.Unicode.GetBytes("lsass"),
                     };
 
                     while ((long)currentAddr < (long)maxAddr)
