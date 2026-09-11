@@ -86,8 +86,9 @@ steam stealers, keyloggers, LSASS dumpers, ransomware, injection APIs, process h
 
 ### anti-hook & self-protection
 - debugger detection (5 methods: IsDebuggerPresent, CheckRemoteDebuggerPresent, NtQueryInformationProcess x3)
+- **PEB direct checks**: BeingDebugged, NtGlobalFlag (debug heap flags), ProcessHeap.ForceFlags — bypasses hooked API calls
 - thread hijacking detection (Thread32First + NtQueryInformationThread)
-- hardware breakpoint detection (DR0-DR3 via GetThreadContext, x86 + x64)
+- hardware breakpoint detection (DR0-DR3 via GetThreadContext, x86 + x64, **scans ALL threads in process**)
 - inline hook scanning on 21+ critical APIs across 8 DLLs (ntdll, kernel32, user32, advapi32, ws2_32, winhttp, crypt32, shell32) with 32-bit + 64-bit patterns
 - IAT hook detection via .text section entropy analysis
 - EAT hook detection (export address table validation)
@@ -96,6 +97,14 @@ steam stealers, keyloggers, LSASS dumpers, ransomware, injection APIs, process h
 - handle abuse detection (full/write+dup access from external processes)
 - module injection detection (unexpected DLLs loaded into IAuthBytes)
 - self-integrity verification: MZ/PE header validation, file size bounds, SHA-256 hash vs stored baseline
+- **parent process validation**: detects suspicious parent processes (cmd, powershell, mshta, etc.) that shouldn't launch IAuthBytes
+- **APC injection detection**: checks thread alertability state for APC queue vulnerability
+- **injected PE detection**: scans memory for PE headers in private executable regions (process hollowing, reflective DLL injection)
+- **shellcode detection**: high-entropy executable memory without module backing
+- **syscall integrity**: validates ntdll syscall stubs (MOV R10,RCX; MOV EAX,SSN; SYSCALL) — detects Hell's Gate/Halos' Gate
+- **hide threads from debugger**: NtSetInformationThread(ThreadHideFromDebugger) on all threads — prevents debugger visibility
+- **anti-kill monitoring**: detects external processes holding PROCESS_TERMINATE/SUSPEND handles
+- **active tamper response**: self-terminates on critical integrity failure
 - **code page locking**: .text section set to PAGE_EXECUTE_READ to prevent runtime patching
 - **IAT integrity monitoring**: periodic verification of import address table against cached snapshot
 - **DLL load monitoring**: detects new DLLs loaded from untrusted paths at runtime (15s interval)

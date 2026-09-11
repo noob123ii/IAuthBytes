@@ -100,6 +100,121 @@ namespace IAuthBytes
         [DllImport("ntdll.dll")]
         private static extern int NtQueryVirtualMemory(IntPtr processHandle, IntPtr baseAddress, int memoryInformationClass, out MEMORY_BASIC_INFORMATION memoryInformation, int memoryInformationLength, out int returnLength);
 
+        [DllImport("ntdll.dll")]
+        private static extern IntPtr NtCurrentTeb();
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtSetInformationThread(IntPtr threadHandle, int threadInformationClass, IntPtr threadInformation, int threadInformationLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool SetProcessMitigationPolicy(int policy, IntPtr lpBuffer, int dwLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool GetProcessMitigationPolicy(IntPtr hProcess, int policy, IntPtr lpBuffer, int dwLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool SetKernelObjectSecurity(IntPtr handle, int securityInformation, [In] byte[] pSecurityDescriptor);
+
+        [DllImport("advapi32.dll")]
+        private static extern bool GetKernelObjectSecurity(IntPtr handle, int securityInformation, [Out] byte[] pSecurityDescriptor, int nLength, out int lpnLengthNeeded);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr OpenProcessToken(IntPtr processHandle, int desiredAccess, out IntPtr tokenHandle);
+
+        [DllImport("advapi32.dll")]
+        private static extern bool LookupPrivilegeValue(string? lpSystemName, string lpName, out LUID lpLuid);
+
+        [DllImport("advapi32.dll")]
+        private static extern bool AdjustTokenPrivileges(IntPtr tokenHandle, bool disableAllPrivileges, ref TOKEN_PRIVILEGES newState, int bufferLength, IntPtr previousState, IntPtr returnLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetCurrentProcessToken();
+
+        [DllImport("kernel32.dll")]
+        private static extern bool GetProcessTimes(IntPtr hProcess, out FILETIME lpCreationTime, out FILETIME lpExitTime, out FILETIME lpKernelTime, out FILETIME lpUserTime);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool IsProcessCritical(IntPtr hProcess, ref bool isCritical);
+
+        [DllImport("ntdll.dll")]
+        private static extern int RtlGetVersion(ref RTL_OSVERSIONINFOEX lpVersionInformation);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, int dwLength);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetProcessIdOfThread(IntPtr thread);
+
+        [DllImport("kernel32.dll")]
+        private static extern int SuspendThread(IntPtr hThread);
+
+        [DllImport("kernel32.dll")]
+        private static extern int ResumeThread(IntPtr hThread);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool WriteFile(IntPtr hFile, byte[] lpBuffer, int nNumberOfBytesToWrite, out int lpNumberOfBytesWritten, IntPtr lpOverlapped);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool GetVersionExA(ref RTL_OSVERSIONINFOEX lpVersionInfo);
+
+        private const int THREAD_SET_INFORMATION = 0x0020;
+        private const int ThreadHideFromDebugger = 0x11;
+        private const int ThreadBreakOnTermination = 0x12;
+
+        private const int PROCESS_TERMINATE = 0x0001;
+        private const int PROCESS_SET_QUOTA = 0x0100;
+        private const int PROCESS_SET_INFORMATION = 0x0200;
+        private const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+        private const int DACL_SECURITY_INFORMATION = 0x00000001;
+
+        private const uint TOKEN_QUERY = 0x0008;
+        private const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+
+        private const int ProcessDynamicCodePolicy = 2;
+        private const int ProcessSignaturePolicy = 7;
+        private const int ProcessChildProcessPolicy = 11;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LUID
+        {
+            public uint LowPart;
+            public int HighPart;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TOKEN_PRIVILEGES
+        {
+            public int PrivilegeCount;
+            public LUID Luid;
+            public int Attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RTL_OSVERSIONINFOEX
+        {
+            public uint dwOSVersionInfoSize;
+            public uint dwMajorVersion;
+            public uint dwMinorVersion;
+            public uint dwBuildNumber;
+            public uint dwPlatformId;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string szCSDVersion;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FILETIME
+        {
+            public uint dwLowDateTime;
+            public uint dwHighDateTime;
+        }
+
         [StructLayout(LayoutKind.Sequential)]
         private struct MEMORY_BASIC_INFORMATION
         {
@@ -111,12 +226,6 @@ namespace IAuthBytes
             public uint Protect;
             public uint Type;
         }
-
-        private const uint PAGE_EXECUTE_READ = 0x20;
-        private const uint PAGE_EXECUTE_READWRITE = 0x40;
-        private const uint PAGE_READWRITE = 0x04;
-        private const uint MEM_COMMIT = 0x1000;
-        private const uint MEM_RESERVE = 0x2000;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct THREADENTRY32
@@ -170,6 +279,8 @@ namespace IAuthBytes
 
         private const int THREAD_QUERY_INFORMATION = 0x0040;
         private const int THREAD_GET_CONTEXT = 0x0008;
+        private const int THREAD_SUSPEND_RESUME = 0x0002;
+        private const int THREAD_QUERY_LIMITED_INFORMATION = 0x0800;
         private const int CONTEXT_DEBUG_REGISTERS = 0x00100010;
         private const int CONTEXT_AMD64 = 0x00100000;
 
@@ -178,6 +289,16 @@ namespace IAuthBytes
         private const int PROCESS_DUP_HANDLE = 0x0040;
         private const int SystemHandleInformation = 16;
         private const int SystemExtendedHandleInformation = 64;
+
+        private const uint PAGE_EXECUTE_READ = 0x20;
+        private const uint PAGE_EXECUTE_READWRITE = 0x40;
+        private const uint PAGE_READWRITE = 0x04;
+        private const uint PAGE_EXECUTE = 0x10;
+        private const uint MEM_COMMIT = 0x1000;
+        private const uint MEM_RESERVE = 0x2000;
+        private const uint MEM_IMAGE = 0x1000000;
+        private const uint MEM_MAPPED = 0x40000;
+        private const uint MEM_PRIVATE = 0x20000;
 
         private static readonly byte[] JmpPatch = { 0xE9, 0x00, 0x00, 0x00, 0x00 };
         private static readonly byte[] CallPatch = { 0xE8, 0x00, 0x00, 0x00, 0x00 };
@@ -189,6 +310,13 @@ namespace IAuthBytes
 
         private static readonly string[] SelfModuleNames = {
             "IAuthBytes.exe", "IAuthBytes.dll"
+        };
+
+        private static readonly HashSet<string> SuspiciousParentProcesses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta",
+            "rundll32", "regsvr32", "certutil", "msiexec", "wmic",
+            "services", "svchost", "winlogon", "smss", "csrss"
         };
 
         private static int _selfPid;
@@ -204,6 +332,7 @@ namespace IAuthBytes
         private static Timer? _dllMonitorTimer;
         private static readonly HashSet<string> _knownModules = new(StringComparer.OrdinalIgnoreCase);
         private static Timer? _memoryProtectionTimer;
+        private static Timer? _antiKillTimer;
 
         public static bool IntegrityCheckFailed => _integrityCheckFailed;
 
@@ -212,6 +341,7 @@ namespace IAuthBytes
             var threats = new List<ThreatInfo>();
 
             threats.AddRange(CheckDebuggerPresence());
+            threats.AddRange(CheckPEBDebuggerFlags());
             threats.AddRange(CheckInlineHooks());
             threats.AddRange(CheckIATHooks());
             threats.AddRange(CheckExternalProcessAccess());
@@ -222,6 +352,10 @@ namespace IAuthBytes
             threats.AddRange(CheckHardwareBreakpoints());
             threats.AddRange(CheckEATHooks());
             threats.AddRange(CheckHookEngineSignatures());
+            threats.AddRange(CheckParentProcess());
+            threats.AddRange(CheckAPCInjection());
+            threats.AddRange(CheckInjectedPE());
+            threats.AddRange(CheckSyscallIntegrity());
             threats.AddRange(RunSelfTest());
 
             return threats;
@@ -235,6 +369,7 @@ namespace IAuthBytes
             ProtectTextSection();
             SnapshotIAT();
             SnapshotKnownModules();
+            HideThreadsFromDebugger();
 
             _integrityTimer = new Timer(_ =>
             {
@@ -253,6 +388,14 @@ namespace IAuthBytes
                     }
 
                     DetectMemoryTampering();
+                    DetectInjectedPE();
+                    DetectShellcodeRegions();
+
+                    if (_integrityCheckFailed)
+                    {
+                        Logger.Log("CRITICAL: Integrity check failed — self-terminating to prevent compromise");
+                        try { TerminateProcess(GetCurrentProcess(), 0xC0DE); } catch { }
+                    }
                 }
                 catch { }
             }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30));
@@ -266,6 +409,15 @@ namespace IAuthBytes
                 catch { }
             }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(15));
 
+            _antiKillTimer = new Timer(_ =>
+            {
+                try
+                {
+                    CheckProcessAlive();
+                }
+                catch { }
+            }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20));
+
             StartSelfFileWatcher();
         }
 
@@ -277,6 +429,8 @@ namespace IAuthBytes
             _dllMonitorTimer = null;
             _memoryProtectionTimer?.Dispose();
             _memoryProtectionTimer = null;
+            _antiKillTimer?.Dispose();
+            _antiKillTimer = null;
             _selfFileWatcher?.Dispose();
             _selfFileWatcher = null;
         }
@@ -1430,32 +1584,69 @@ namespace IAuthBytes
 
             try
             {
-                IntPtr hThread = GetCurrentThread();
+                int currentPid = GetCurrentProcessId();
                 bool is64Bit = IntPtr.Size == 8;
 
-                if (is64Bit)
+                IntPtr hSnapshot = CreateToolhelp32Snapshot(0x00000004u, 0);
+                if (hSnapshot == IntPtr.Zero || hSnapshot == (IntPtr)(-1))
+                    return threats;
+
+                try
                 {
-                    CONTEXT64 ctx = new();
-                    ctx.ContextFlags = CONTEXT_AMD64 | 0x10; // CONTEXT_DEBUG_REGISTERS
-                    if (GetThreadContext(hThread, ref ctx))
+                    THREADENTRY32 te = new();
+                    te.dwSize = (uint)Marshal.SizeOf(typeof(THREADENTRY32));
+
+                    if (Thread32First(hSnapshot, ref te))
                     {
-                        if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR0 set: 0x{ctx.Dr0:X16}" });
-                        if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR1 set: 0x{ctx.Dr1:X16}" });
-                        if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR2 set: 0x{ctx.Dr2:X16}" });
-                        if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR3 set: 0x{ctx.Dr3:X16}" });
+                        do
+                        {
+                            if ((int)te.th32OwnerProcessID != currentPid) continue;
+
+                            try
+                            {
+                                IntPtr hThread = OpenThread(THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION, false, te.th32ThreadID);
+                                if (hThread == IntPtr.Zero) continue;
+
+                                try
+                                {
+                                    if (is64Bit)
+                                    {
+                                        CONTEXT64 ctx = new();
+                                        ctx.ContextFlags = CONTEXT_AMD64 | 0x10; // CONTEXT_DEBUG_REGISTERS
+                                        if (GetThreadContext(hThread, ref ctx))
+                                        {
+                                            if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR0 = 0x{ctx.Dr0:X16}" });
+                                            if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR1 = 0x{ctx.Dr1:X16}" });
+                                            if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR2 = 0x{ctx.Dr2:X16}" });
+                                            if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR3 = 0x{ctx.Dr3:X16}" });
+                                        }
+                                    }
+                                    else
+                                    {
+                                        CONTEXT32 ctx = new();
+                                        ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+                                        if (GetThreadContext(hThread, ref ctx))
+                                        {
+                                            if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR0 = 0x{ctx.Dr0:X8}" });
+                                            if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR1 = 0x{ctx.Dr1:X8}" });
+                                            if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR2 = 0x{ctx.Dr2:X8}" });
+                                            if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Thread {te.th32ThreadID}: DR3 = 0x{ctx.Dr3:X8}" });
+                                        }
+                                    }
+                                }
+                                finally
+                                {
+                                    CloseHandle(hThread);
+                                }
+                            }
+                            catch { }
+                        }
+                        while (Thread32Next(hSnapshot, ref te));
                     }
                 }
-                else
+                finally
                 {
-                    CONTEXT32 ctx = new();
-                    ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-                    if (GetThreadContext(hThread, ref ctx))
-                    {
-                        if (ctx.Dr0 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR0 set: 0x{ctx.Dr0:X8}" });
-                        if (ctx.Dr1 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR1 set: 0x{ctx.Dr1:X8}" });
-                        if (ctx.Dr2 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR2 set: 0x{ctx.Dr2:X8}" });
-                        if (ctx.Dr3 != 0) threats.Add(new ThreatInfo { FileName = "HW Breakpoint", FilePath = "", ThreatType = "Anti-Hook", FileSize = "", Severity = Severity.High, Description = $"Hardware breakpoint DR3 set: 0x{ctx.Dr3:X8}" });
-                    }
+                    CloseHandle(hSnapshot);
                 }
             }
             catch { }
@@ -1838,6 +2029,581 @@ namespace IAuthBytes
 
             return threats;
         }
+
+        // =====================================================================
+        // PEB DEBUGGER FLAGS (direct — bypasses hooked IsDebuggerPresent)
+        // =====================================================================
+        private static List<ThreatInfo> CheckPEBDebuggerFlags()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                IntPtr teb = NtCurrentTeb();
+                if (teb != IntPtr.Zero)
+                {
+                    IntPtr peb = Marshal.ReadIntPtr(teb, 0x60); // PEB at TEB+0x60 (x64)
+                    if (peb != IntPtr.Zero)
+                    {
+                        // BeingDebugged at PEB+0x2
+                        byte beingDebugged = Marshal.ReadByte(peb, 0x2);
+                        if (beingDebugged != 0)
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = "System", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                                Severity = Severity.High,
+                                Description = "PEB.BeingDebugged flag is set — debugger present (direct PEB check)"
+                            });
+                        }
+
+                        // NtGlobalFlag at PEB+0xBC (x64) or PEB+0x68 (x86)
+                        int ntfOffset = IntPtr.Size == 8 ? 0xBC : 0x68;
+                        int ntGlobalFlag = Marshal.ReadInt32(peb, ntfOffset);
+                        int debugFlags = 0x70; // FLG_HEAP_ENABLE_TAIL_CHECK | FREE_CHECK | VALIDATE_PARAMETERS
+                        if ((ntGlobalFlag & debugFlags) != 0)
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = "System", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                                Severity = Severity.High,
+                                Description = $"PEB.NtGlobalFlag = 0x{ntGlobalFlag:X} — debug heap flags detected"
+                            });
+                        }
+
+                        // ProcessHeap flags at PEB+0x18 -> Heap+0x40 (Flags) and Heap+0x70 (ForceFlags)
+                        IntPtr processHeap = Marshal.ReadIntPtr(peb, 0x18);
+                        if (processHeap != IntPtr.Zero)
+                        {
+                            int heapFlags = Marshal.ReadInt32(processHeap, 0x40);
+                            int heapForceFlags = Marshal.ReadInt32(processHeap, 0x70);
+                            if (heapForceFlags != 0)
+                            {
+                                threats.Add(new ThreatInfo
+                                {
+                                    FileName = "System", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                                    Severity = Severity.High,
+                                    Description = $"ProcessHeap.ForceFlags = 0x{heapForceFlags:X} — debug heap manipulation detected"
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        // =====================================================================
+        // PARENT PROCESS VALIDATION
+        // =====================================================================
+        private static List<ThreatInfo> CheckParentProcess()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                IntPtr parentPid = IntPtr.Zero;
+                int status = NtQueryInformationProcess(GetCurrentProcess(), 0, ref parentPid, IntPtr.Size, IntPtr.Zero);
+                if (status == 0 && parentPid != IntPtr.Zero)
+                {
+                    int ppid = parentPid.ToInt32();
+                    try
+                    {
+                        using var parentProc = Process.GetProcessById(ppid);
+                        string parentName = parentProc.ProcessName.ToLowerInvariant();
+
+                        bool isSuspicious = SuspiciousParentProcesses.Contains(parentName);
+                        if (isSuspicious)
+                        {
+                            threats.Add(new ThreatInfo
+                            {
+                                FileName = parentName, FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                                Severity = Severity.Critical,
+                                Description = $"Suspicious parent process: {parentName} (PID {ppid}) spawned IAuthBytes — possible process hollowing"
+                            });
+                        }
+                    }
+                    catch
+                    {
+                        // Parent process not found — could be PPID spoofing
+                    }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        // =====================================================================
+        // APC INJECTION DETECTION
+        // =====================================================================
+        private static List<ThreatInfo> CheckAPCInjection()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                int currentPid = GetCurrentProcessId();
+                IntPtr hSnapshot = CreateToolhelp32Snapshot(0x00000004u, 0);
+                if (hSnapshot == IntPtr.Zero || hSnapshot == (IntPtr)(-1))
+                    return threats;
+
+                try
+                {
+                    THREADENTRY32 te = new();
+                    te.dwSize = (uint)Marshal.SizeOf(typeof(THREADENTRY32));
+
+                    if (Thread32First(hSnapshot, ref te))
+                    {
+                        do
+                        {
+                            if ((int)te.th32OwnerProcessID != currentPid) continue;
+
+                            try
+                            {
+                                IntPtr hThread = OpenThread(THREAD_QUERY_INFORMATION, false, te.th32ThreadID);
+                                if (hThread == IntPtr.Zero) continue;
+
+                                try
+                                {
+                                    // Check thread state — alertable threads can receive APCs
+                                    IntPtr threadState = IntPtr.Zero;
+                                    int stateStatus = NtQueryInformationThread(hThread, 0 /* ThreadBasicInformation */, ref threadState, IntPtr.Size, IntPtr.Zero);
+                                    if (stateStatus == 0)
+                                    {
+                                        // ThreadState is at offset 0 of THREAD_BASIC_INFORMATION
+                                        int state = Marshal.ReadInt32(threadState, 0);
+                                        if (state == 5) // Waiting state — potentially alertable
+                                        {
+                                            // Check alertable flag at offset 8 of THREAD_BASIC_INFORMATION
+                                            byte alertable = Marshal.ReadByte(threadState, 8);
+                                            if (alertable != 0)
+                                            {
+                                                threats.Add(new ThreatInfo
+                                                {
+                                                    FileName = "APC", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                                                    Severity = Severity.High,
+                                                    Description = $"Thread {te.th32ThreadID} is alertable — can receive APC injection"
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                finally
+                                {
+                                    CloseHandle(hThread);
+                                }
+                            }
+                            catch { }
+                        }
+                        while (Thread32Next(hSnapshot, ref te));
+                    }
+                }
+                finally
+                {
+                    CloseHandle(hSnapshot);
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        // =====================================================================
+        // INJECTED PE DETECTION (memory-resident DLLs)
+        // =====================================================================
+        private static List<ThreatInfo> CheckInjectedPE()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                IntPtr selfBase = GetModuleHandle(string.Empty);
+                if (selfBase == IntPtr.Zero) return threats;
+
+                IntPtr queryAddr = IntPtr.Zero;
+                int checkedRegions = 0;
+                int injectedCount = 0;
+
+                while (checkedRegions < 200)
+                {
+                    MEMORY_BASIC_INFORMATION mbi;
+                    int status = NtQueryVirtualMemory(GetCurrentProcess(), queryAddr, 0, out mbi, Marshal.SizeOf<MEMORY_BASIC_INFORMATION>(), out _);
+                    if (status != 0) break;
+                    if (mbi.BaseAddress == IntPtr.Zero) break;
+
+                    if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE &&
+                        (mbi.Protect == PAGE_EXECUTE || mbi.Protect == PAGE_EXECUTE_READ))
+                    {
+                        int regionSize = mbi.RegionSize.ToInt32();
+                        if (regionSize > 4096 && regionSize < 0x10000000)
+                        {
+                            byte[] header = new byte[Math.Min(regionSize, 1024)];
+                            if (ReadProcessMemory(GetCurrentProcess(), mbi.BaseAddress, header, header.Length, out int read) && read >= 2)
+                            {
+                                if (header[0] == 0x4D && header[1] == 0x5A)
+                                {
+                                    long headerLong = BitConverter.ToInt32(header, 0x3C);
+                                    if (headerLong > 0 && headerLong < read - 4)
+                                    {
+                                        if (header[(int)headerLong] == 0x50 && header[(int)headerLong + 1] == 0x45)
+                                        {
+                                            injectedCount++;
+                                            if (injectedCount <= 5)
+                                            {
+                                                threats.Add(new ThreatInfo
+                                                {
+                                                    FileName = "Injected PE", FilePath = "",
+                                                    ThreatType = "Anti-Hook", FileSize = FormatSize(regionSize),
+                                                    Severity = Severity.Critical,
+                                                    Description = $"PE header found in private executable memory at 0x{mbi.BaseAddress.ToInt64():X} — possible process hollowing or reflective DLL injection"
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    long nextAddr = mbi.BaseAddress.ToInt64() + mbi.RegionSize.ToInt64();
+                    if (nextAddr <= queryAddr.ToInt64()) break;
+                    queryAddr = new IntPtr(nextAddr);
+                    checkedRegions++;
+                }
+
+                if (injectedCount > 5)
+                {
+                    threats.Add(new ThreatInfo
+                    {
+                        FileName = "Injected PE", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                        Severity = Severity.Critical,
+                        Description = $"Total: {injectedCount} injected PE(s) detected in memory"
+                    });
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        // =====================================================================
+        // SYSCALL INTEGRITY (ntdll stub validation)
+        // =====================================================================
+        private static List<ThreatInfo> CheckSyscallIntegrity()
+        {
+            var threats = new List<ThreatInfo>();
+
+            try
+            {
+                IntPtr hNtdll = GetModuleHandle("ntdll.dll");
+                if (hNtdll == IntPtr.Zero) return threats;
+
+                string[] syscallFuncs = { "NtCreateFile", "NtReadFile", "NtWriteFile", "NtProtectVirtualMemory", "NtAllocateVirtualMemory" };
+
+                foreach (string funcName in syscallFuncs)
+                {
+                    IntPtr funcAddr = GetProcAddress(hNtdll, funcName);
+                    if (funcAddr == IntPtr.Zero) continue;
+
+                    byte[] stub = new byte[32];
+                    if (!ReadProcessMemory(GetCurrentProcess(), funcAddr, stub, stub.Length, out int read) || read < 16)
+                        continue;
+
+                    // x64 syscall stub: 4C 8B D1 (MOV R10, RCX) followed by B8 XX XX 00 00 (MOV EAX, SSN)
+                    // Then 0F 05 (SYSCALL) followed by C3 (RET)
+                    bool hasMovR10 = stub[0] == 0x4C && stub[1] == 0x8B && stub[2] == 0xD1;
+                    bool hasMovEax = stub[3] == 0xB8;
+                    bool hasSyscall = false;
+
+                    for (int i = 0; i < read - 1; i++)
+                    {
+                        if (stub[i] == 0x0F && stub[i + 1] == 0x05)
+                        {
+                            hasSyscall = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasMovR10 || !hasMovEax || !hasSyscall)
+                    {
+                        threats.Add(new ThreatInfo
+                        {
+                            FileName = "ntdll.dll", FilePath = "", ThreatType = "Anti-Hook", FileSize = "",
+                            Severity = Severity.Critical,
+                            Description = $"Syscall stub for {funcName} is malformed — possible Hell's Gate or direct syscall hook (bytes: {BitConverter.ToString(stub, 0, 8)})"
+                        });
+                    }
+                }
+            }
+            catch { }
+
+            return threats;
+        }
+
+        // =====================================================================
+        // ANTI-KILL: Apply process mitigation policies
+        // =====================================================================
+        private static void ApplyProcessProtections()
+        {
+            try
+            {
+                // Restrict dynamic code generation — blocks VirtualAlloc + EXECUTE in child processes
+                try
+                {
+                    IntPtr hProcess = GetCurrentProcess();
+                    int enable = 1;
+                    IntPtr buf = Marshal.AllocHGlobal(4);
+                    Marshal.WriteInt32(buf, enable);
+                    bool ok = SetProcessMitigationPolicy(ProcessDynamicCodePolicy, buf, 4);
+                    Marshal.FreeHGlobal(buf);
+                    if (ok) Logger.Log("ApplyProcessProtections: Dynamic code policy applied");
+                }
+                catch { }
+
+                Logger.Log("ApplyProcessProtections: Process protections initialized");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("ApplyProcessProtections", ex);
+            }
+        }
+
+        // =====================================================================
+        // HIDE THREADS FROM DEBUGGER
+        // =====================================================================
+        private static void HideThreadsFromDebugger()
+        {
+            try
+            {
+                int currentPid = GetCurrentProcessId();
+                int hiddenCount = 0;
+
+                IntPtr hSnapshot = CreateToolhelp32Snapshot(0x00000004u, 0);
+                if (hSnapshot == IntPtr.Zero || hSnapshot == (IntPtr)(-1))
+                    return;
+
+                try
+                {
+                    THREADENTRY32 te = new();
+                    te.dwSize = (uint)Marshal.SizeOf(typeof(THREADENTRY32));
+
+                    if (Thread32First(hSnapshot, ref te))
+                    {
+                        do
+                        {
+                            if ((int)te.th32OwnerProcessID != currentPid) continue;
+
+                            try
+                            {
+                                IntPtr hThread = OpenThread(THREAD_SET_INFORMATION, false, te.th32ThreadID);
+                                if (hThread != IntPtr.Zero)
+                                {
+                                    try
+                                    {
+                                        int result = NtSetInformationThread(hThread, ThreadHideFromDebugger, IntPtr.Zero, 0);
+                                        if (result == 0) hiddenCount++;
+                                    }
+                                    finally
+                                    {
+                                        CloseHandle(hThread);
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                        while (Thread32Next(hSnapshot, ref te));
+                    }
+                }
+                finally
+                {
+                    CloseHandle(hSnapshot);
+                }
+
+                Logger.Log($"HideThreadsFromDebugger: Hidden {hiddenCount} threads from debugger");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogException("HideThreadsFromDebugger", ex);
+            }
+        }
+
+        // =====================================================================
+        // ANTI-KILL: Monitor own liveness
+        // =====================================================================
+        private static void CheckProcessAlive()
+        {
+            try
+            {
+                // Check if any external process has PROCESS_TERMINATE handle to us
+                int currentPid = GetCurrentProcessId();
+                int handleInfoSize = 0x10000;
+
+                IntPtr handleInfoPtr = Marshal.AllocHGlobal(handleInfoSize);
+                try
+                {
+                    int status = NtQuerySystemInformation(SystemExtendedHandleInformation, handleInfoPtr, handleInfoSize, out _);
+                    if (status != 0) return;
+
+                    int numberOfHandles = Marshal.ReadInt32(handleInfoPtr);
+                    IntPtr currentPtr = IntPtr.Add(handleInfoPtr, IntPtr.Size + IntPtr.Size);
+
+                    for (int i = 0; i < numberOfHandles && i < 10000; i++)
+                    {
+                        try
+                        {
+                            long objectPtr = Marshal.ReadInt64(currentPtr);
+                            long handleValue = Marshal.ReadInt64(currentPtr, IntPtr.Size);
+                            int ownerPid = Marshal.ReadInt32(currentPtr, 2 * IntPtr.Size);
+                            int accessMask = Marshal.ReadInt32(currentPtr, 2 * IntPtr.Size + 4);
+
+                            if (ownerPid != currentPid && ownerPid > 0)
+                            {
+                                bool hasTerminate = (accessMask & 0x0001) != 0; // PROCESS_TERMINATE
+                                bool hasSuspend = (accessMask & 0x0800) != 0; // PROCESS_SUSPEND_RESUME
+
+                                if (hasTerminate || hasSuspend)
+                                {
+                                    string ownerName = "";
+                                    try
+                                    {
+                                        using var ownerProcess = Process.GetProcessById(ownerPid);
+                                        ownerName = ownerProcess.ProcessName;
+                                    }
+                                    catch { ownerName = $"PID {ownerPid}"; }
+
+                                    Logger.Log($"CRITICAL: {ownerName} holds PROCESS_TERMINATE/SUSPEND handle to IAuthBytes — possible kill/suspend attempt");
+                                    _integrityCheckFailed = true;
+                                }
+                            }
+
+                            currentPtr = IntPtr.Add(currentPtr, 2 * IntPtr.Size + 4 * IntPtr.Size);
+                        }
+                        catch { }
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(handleInfoPtr);
+                }
+            }
+            catch { }
+        }
+
+        // =====================================================================
+        // DETECT INJECTED PE (continuous monitoring)
+        // =====================================================================
+        private static void DetectInjectedPE()
+        {
+            try
+            {
+                IntPtr selfBase = GetModuleHandle(string.Empty);
+                if (selfBase == IntPtr.Zero) return;
+
+                IntPtr queryAddr = IntPtr.Zero;
+                int checkedRegions = 0;
+
+                while (checkedRegions < 100)
+                {
+                    MEMORY_BASIC_INFORMATION mbi;
+                    int status = NtQueryVirtualMemory(GetCurrentProcess(), queryAddr, 0, out mbi, Marshal.SizeOf<MEMORY_BASIC_INFORMATION>(), out _);
+                    if (status != 0) break;
+                    if (mbi.BaseAddress == IntPtr.Zero) break;
+
+                    if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE &&
+                        (mbi.Protect == PAGE_EXECUTE || mbi.Protect == PAGE_EXECUTE_READ))
+                    {
+                        int regionSize = mbi.RegionSize.ToInt32();
+                        if (regionSize > 4096 && regionSize < 0x10000000)
+                        {
+                            byte[] header = new byte[Math.Min(regionSize, 1024)];
+                            if (ReadProcessMemory(GetCurrentProcess(), mbi.BaseAddress, header, header.Length, out int read) && read >= 2)
+                            {
+                                if (header[0] == 0x4D && header[1] == 0x5A)
+                                {
+                                    int peOff = BitConverter.ToInt32(header, 0x3C);
+                                    if (peOff > 0 && peOff < read - 4 && header[peOff] == 0x50 && header[peOff + 1] == 0x45)
+                                    {
+                                        Logger.Log($"CRITICAL: Injected PE detected at 0x{mbi.BaseAddress.ToInt64():X} (size: {FormatSize(regionSize)})");
+                                        _integrityCheckFailed = true;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    long nextAddr = mbi.BaseAddress.ToInt64() + mbi.RegionSize.ToInt64();
+                    if (nextAddr <= queryAddr.ToInt64()) break;
+                    queryAddr = new IntPtr(nextAddr);
+                    checkedRegions++;
+                }
+            }
+            catch { }
+        }
+
+        // =====================================================================
+        // DETECT SHELLCODE REGIONS (executable memory without module backing)
+        // =====================================================================
+        private static void DetectShellcodeRegions()
+        {
+            try
+            {
+                IntPtr selfBase = GetModuleHandle(string.Empty);
+                if (selfBase == IntPtr.Zero) return;
+
+                var process = Process.GetCurrentProcess();
+                IntPtr queryAddr = IntPtr.Zero;
+                int checkedRegions = 0;
+                int suspiciousCount = 0;
+
+                while (checkedRegions < 100)
+                {
+                    MEMORY_BASIC_INFORMATION mbi;
+                    int status = NtQueryVirtualMemory(GetCurrentProcess(), queryAddr, 0, out mbi, Marshal.SizeOf<MEMORY_BASIC_INFORMATION>(), out _);
+                    if (status != 0) break;
+                    if (mbi.BaseAddress == IntPtr.Zero) break;
+
+                    if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE &&
+                        (mbi.Protect == PAGE_EXECUTE || mbi.Protect == PAGE_EXECUTE_READ))
+                    {
+                        int regionSize = mbi.RegionSize.ToInt32();
+                        if (regionSize > 256 && regionSize < 0x1000000)
+                        {
+                            // Check if this region contains shellcode patterns
+                            byte[] buf = new byte[Math.Min(regionSize, 4096)];
+                            if (ReadProcessMemory(GetCurrentProcess(), mbi.BaseAddress, buf, buf.Length, out int read) && read > 0)
+                            {
+                                double entropy = CalcEntropy(buf, 0, read);
+                                if (entropy > 6.0 && regionSize > 1024)
+                                {
+                                    suspiciousCount++;
+                                }
+                            }
+                        }
+                    }
+
+                    long nextAddr = mbi.BaseAddress.ToInt64() + mbi.RegionSize.ToInt64();
+                    if (nextAddr <= queryAddr.ToInt64()) break;
+                    queryAddr = new IntPtr(nextAddr);
+                    checkedRegions++;
+                }
+
+                if (suspiciousCount > 10)
+                {
+                    Logger.Log($"WARNING: {suspiciousCount} high-entropy executable memory regions detected — possible shellcode");
+                }
+            }
+            catch { }
+        }
+
+        // =====================================================================
+        // FIX: CheckHardwareBreakpoints — scan ALL threads, not just current
+        // =====================================================================
+        // The existing CheckHardwareBreakpoints only checks GetCurrentThread().
+        // This override scans every thread in the process.
 
         private static double CalcEntropy(byte[] data, int offset, int length)
         {
