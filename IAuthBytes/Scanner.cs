@@ -612,9 +612,10 @@ namespace IAuthBytes
                 strongCount++; reasons.Add("APC injection");
             }
 
-            // Thread hijacking
+            // Thread hijacking — requires injection context, not just API presence
             bool hasThreadHijack = HasPattern("SuspendThread") && HasPattern("GetThreadContext") &&
-                                   HasPattern("SetThreadContext") && HasPattern("ResumeThread");
+                                   HasPattern("SetThreadContext") && HasPattern("ResumeThread") &&
+                                   (HasPattern("VirtualAllocEx") || HasPattern("WriteProcessMemory") || HasPattern("NtUnmapViewOfSection"));
             if (hasThreadHijack)
             {
                 strongCount++; reasons.Add("Thread hijacking");
@@ -636,15 +637,14 @@ namespace IAuthBytes
                 strongCount++; reasons.Add("Direct syscall abuse");
             }
 
-            // More anti-analysis patterns
+            // More anti-analysis patterns — requires 5+ of 8 specific anti-debug APIs (not common NT APIs)
             int antiDbgCount2 = new[] {
                 HasPattern("IsDebuggerPresent"), HasPattern("CheckRemoteDebuggerPresent"),
-                HasPattern("NtQueryInformationProcess"), HasPattern("OutputDebugString"),
-                HasPattern("NtSetInformationThread"), HasPattern("GetTickCount64"),
-                HasPattern("QueryPerformanceCounter"), HasPattern("rdtsc"),
-                HasPattern("NtQuerySystemInformation"), HasPattern("NtClose")
+                HasPattern("OutputDebugString"), HasPattern("NtSetInformationThread"),
+                HasPattern("GetTickCount64"), HasPattern("QueryPerformanceCounter"),
+                HasPattern("rdtsc"), HasPattern("NtQuerySystemInformation")
             }.Count(x => x);
-            if (antiDbgCount2 >= 4)
+            if (antiDbgCount2 >= 5)
             {
                 strongCount++; reasons.Add("Advanced anti-analysis");
             }
@@ -714,16 +714,16 @@ namespace IAuthBytes
                 strongCount++; reasons.Add("COM hijacking");
             }
 
-            // More data exfiltration patterns
+            // More data exfiltration patterns — requires SMTP + credential + send + mail object
             bool hasMailExfil = HasPattern("SmtpClient") && HasPattern("NetworkCredential") &&
-                                (HasPattern("EnableSsl") || HasPattern("Port"));
+                                HasPattern("Send") && HasPattern("MailMessage");
             if (hasMailExfil)
             {
                 strongCount++; reasons.Add("Email exfiltration");
             }
 
-            bool hasFtpExfil = HasPattern("FtpWebRequest") || HasPattern("WebClient") &&
-                               HasPattern("ftp://");
+            bool hasFtpExfil = HasPattern("FtpWebRequest") && HasPattern("ftp://") &&
+                               (hasUploadExfil || HasPattern("Upload") || HasPattern("RequestStream"));
             if (hasFtpExfil)
             {
                 strongCount++; reasons.Add("FTP exfiltration");
